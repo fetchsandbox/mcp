@@ -1,0 +1,51 @@
+{
+  "name": "fetchsandbox-mcp",
+  "version": "0.1.1",
+  "description": "Turn any OpenAPI spec into a working sandbox your AI agent can use. MCP server for Claude Code, Cursor, and any other MCP-compatible LLM IDE.",
+  "license": "MIT",
+  "author": "FetchSandbox",
+  "homepage": "https://fetchsandbox.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fetchsandbox/mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fetchsandbox/mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "openapi",
+    "sandbox",
+    "api",
+    "claude",
+    "cursor",
+    "agent"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "fetchsandbox-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
