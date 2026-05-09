@@ -2,7 +2,7 @@
 
 Turn any OpenAPI spec into a working sandbox your AI agent can use, right from your IDE.
 
-This is the Model Context Protocol (MCP) server for [FetchSandbox](https://fetchsandbox.com). It exposes three tools that let Claude Code, Cursor, Cline, or any MCP-compatible client ingest an OpenAPI spec, list its workflows, and run them — with realistic, schema-validated responses for every endpoint.
+This is the Model Context Protocol (MCP) server for [FetchSandbox](https://fetchsandbox.com). It exposes three tools that let any MCP-compatible agent ingest an OpenAPI spec, list its workflows, and run them — with realistic, schema-validated responses for every endpoint.
 
 ## Why
 
@@ -10,24 +10,13 @@ Agents read raw OpenAPI specs and hallucinate. They guess field names, invent ID
 
 Plug it into your IDE once, and any time you ask your agent "let me try the Stripe API" or "show me the GitHub issue lifecycle," it can do that — for real, end-to-end.
 
-## Install
+## Install — by agent
 
-The MCP runs as a stdio process spawned by your IDE. There's nothing to install globally — `npx` runs the latest published version on demand.
+The MCP runs as a stdio process spawned by your IDE. There's nothing to install globally — `npx` runs the latest published version on demand. Pick your tool below, paste the snippet, restart.
 
-### Claude Code (`~/.config/claude/claude_code_settings.json` or your project's `.mcp.json`)
+### Claude Desktop
 
-```json
-{
-  "mcpServers": {
-    "fetchsandbox": {
-      "command": "npx",
-      "args": ["-y", "fetchsandbox-mcp"]
-    }
-  }
-}
-```
-
-### Cursor (`~/.cursor/mcp.json`)
+File: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows)
 
 ```json
 {
@@ -40,7 +29,141 @@ The MCP runs as a stdio process spawned by your IDE. There's nothing to install 
 }
 ```
 
-Restart your IDE after editing the config. The tools `import_spec`, `list_workflows`, and `run_workflow` become available to your agent.
+Quit and reopen Claude Desktop (Cmd+Q, then reopen — not just close window).
+
+### Claude Code
+
+User-level (all projects): `~/.claude/settings.json`. Or project-level: `.mcp.json` in the repo root.
+
+```json
+{
+  "mcpServers": {
+    "fetchsandbox": {
+      "command": "npx",
+      "args": ["-y", "fetchsandbox-mcp"]
+    }
+  }
+}
+```
+
+Restart the Claude Code session.
+
+### Cursor
+
+File: `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project)
+
+```json
+{
+  "mcpServers": {
+    "fetchsandbox": {
+      "command": "npx",
+      "args": ["-y", "fetchsandbox-mcp"]
+    }
+  }
+}
+```
+
+Restart Cursor.
+
+### Cline (VS Code extension)
+
+Open the Cline panel → settings cog → MCP Servers → add a new server with:
+
+- Command: `npx`
+- Args: `-y fetchsandbox-mcp`
+
+Reload the VS Code window.
+
+### Continue.dev
+
+File: `~/.continue/config.yaml`
+
+```yaml
+mcpServers:
+  - name: fetchsandbox
+    command: npx
+    args:
+      - -y
+      - fetchsandbox-mcp
+```
+
+Restart your IDE.
+
+### Codex CLI (OpenAI)
+
+File: `~/.codex/config.toml`
+
+```toml
+[mcp_servers.fetchsandbox]
+command = "npx"
+args = ["-y", "fetchsandbox-mcp"]
+```
+
+Restart Codex.
+
+### Zed
+
+File: `~/.config/zed/settings.json`
+
+```json
+{
+  "context_servers": {
+    "fetchsandbox": {
+      "command": {
+        "path": "npx",
+        "args": ["-y", "fetchsandbox-mcp"]
+      }
+    }
+  }
+}
+```
+
+### GitHub Copilot
+
+GitHub Copilot doesn't currently support the Model Context Protocol. Track [github/copilot#feedback](https://github.com/orgs/community/discussions) for updates. In the meantime, run any MCP-compatible chat (Claude Code, Cursor, Cline) alongside Copilot.
+
+### Anything else (Roo, Goose, etc.)
+
+If your agent speaks MCP, it accepts a stdio command. Use:
+
+- Command: `npx`
+- Args: `["-y", "fetchsandbox-mcp"]`
+
+## Try it now
+
+After restarting your agent, paste any of these prompts. Each hits a hand-curated workflow with realistic IDs and real state transitions.
+
+### Stripe — accept a payment
+
+> Use fetchsandbox to import the Stripe spec from `https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json` and run the `accept_payment` workflow. Show me the trace.
+
+The agent imports 587 endpoints, matches the bundled curated Stripe sandbox, and runs a 6-step workflow: create customer (`cus_…`) → create PaymentIntent (`pi_…`, `$49.99 USD`, `requires_payment_method`) → confirm (`requires_capture`) → capture (`succeeded`) → retrieve → verify webhooks (`payment_intent.created`, `payment_intent.succeeded`).
+
+### Twilio — send an SMS
+
+> Use fetchsandbox to import the Twilio Messaging spec from `https://raw.githubusercontent.com/twilio/twilio-oai/main/spec/yaml/twilio_messaging_v1.yaml` and run the `send_sms` workflow.
+
+The agent imports the messaging API and runs a curated send-and-verify flow with realistic Twilio-formatted message SIDs (`SM…`).
+
+### GitHub — issue lifecycle
+
+> Use fetchsandbox to import the GitHub REST API from `https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json` and run the `issue_lifecycle` workflow.
+
+The agent walks the create → comment → close → reopen flow against a real-shaped GitHub sandbox.
+
+### Paddle — paste-content variant
+
+If a vendor doesn't publish their spec at a stable URL (Paddle, Notion, Linear), paste the content directly:
+
+> Here's the Paddle Billing OpenAPI spec — `<paste JSON or YAML>`. Use fetchsandbox to import it and run the `subscriptions_canceled` workflow.
+
+Same engine path; same curated quality if the spec's `info.title` matches a bundled config.
+
+### Any other API
+
+> Use fetchsandbox to import `<your OpenAPI URL>` — list the workflows and tell me which is most interesting.
+
+For specs we don't have curated configs for, the engine auto-enumerates `create + verify` workflows for every detected resource. Honest about what it shows: UUIDs instead of vendor-style IDs, generic enum values instead of API-specific ones — but the request/response shape and template substitution between steps still work.
 
 ## Tools
 
@@ -54,7 +177,7 @@ content: "<paste OpenAPI JSON or YAML here>"
 name:    "Optional friendly name"
 ```
 
-Returns `spec_id`, `sandbox_id`, `base_url` (proxy that serves real-shaped responses), workflow list, and a `dashboard_url` to view everything in the browser.
+Returns `spec_id`, `sandbox_id`, `base_url` (proxy that serves real-shaped responses), `workflows_preview` (first 10), `matched_bundled` (true if we matched a curated config), and a `dashboard_url` to view everything in the browser.
 
 ### `list_workflows`
 
@@ -89,16 +212,6 @@ To opt out:
 ```bash
 export FETCHSANDBOX_TELEMETRY=0
 ```
-
-## Example session
-
-> **You:** Try the Stripe API. Use this spec: https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json
->
-> **Agent:** *(calls `import_spec`)* Imported. 471 endpoints, 12 workflows including customer-create, subscription-lifecycle, refund-flow.
->
-> **You:** Run the subscription-lifecycle one.
->
-> **Agent:** *(calls `run_workflow`)* All 5 steps passed: created customer (cus_LJ4nQ...), attached payment method (pm_8K2...), created subscription (sub_R6F...), updated to a different price (sub.items.0 swap), canceled subscription. Here's the trace: ...
 
 ## License
 
