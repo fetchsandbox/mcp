@@ -4,6 +4,8 @@ Turn any OpenAPI spec into a working sandbox your AI agent can use, right from y
 
 This is the Model Context Protocol (MCP) server for [FetchSandbox](https://fetchsandbox.com). It exposes three tools that let any MCP-compatible agent ingest an OpenAPI spec, list its workflows, and run them — with realistic, schema-validated responses for every endpoint.
 
+> ⭐ **If FetchSandbox saves you a debugging session, star this repo.** It helps people find the project and helps us prioritize what to build next.
+
 ## Why
 
 Agents read raw OpenAPI specs and hallucinate. They guess field names, invent IDs that won't exist, and produce broken curl commands. FetchSandbox turns the spec into a stateful, AJV-validated sandbox so the agent can actually call the API and see real-shaped responses.
@@ -12,7 +14,9 @@ Plug it into your IDE once, and any time you ask your agent "let me try the Stri
 
 ## Install — by agent
 
-The MCP runs as a stdio process spawned by your IDE. There's nothing to install globally — `npx` runs the latest published version on demand. Pick your tool below, paste the snippet, restart.
+The MCP runs as a stdio process spawned by your IDE. There's nothing to install globally — `npx` runs the published version on demand. We recommend pinning to `@latest` so each session auto-upgrades to the current release; otherwise npm caches the first version it saw and silently drifts behind.
+
+Pick your tool below, paste the snippet, restart.
 
 ### Claude Desktop
 
@@ -23,7 +27,7 @@ File: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) 
   "mcpServers": {
     "fetchsandbox": {
       "command": "npx",
-      "args": ["-y", "fetchsandbox-mcp"]
+      "args": ["-y", "fetchsandbox-mcp@latest"]
     }
   }
 }
@@ -40,7 +44,7 @@ User-level (all projects): `~/.claude/settings.json`. Or project-level: `.mcp.js
   "mcpServers": {
     "fetchsandbox": {
       "command": "npx",
-      "args": ["-y", "fetchsandbox-mcp"]
+      "args": ["-y", "fetchsandbox-mcp@latest"]
     }
   }
 }
@@ -57,7 +61,7 @@ File: `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project)
   "mcpServers": {
     "fetchsandbox": {
       "command": "npx",
-      "args": ["-y", "fetchsandbox-mcp"]
+      "args": ["-y", "fetchsandbox-mcp@latest"]
     }
   }
 }
@@ -70,7 +74,7 @@ Restart Cursor.
 Open the Cline panel → settings cog → MCP Servers → add a new server with:
 
 - Command: `npx`
-- Args: `-y fetchsandbox-mcp`
+- Args: `-y fetchsandbox-mcp@latest`
 
 Reload the VS Code window.
 
@@ -84,7 +88,7 @@ mcpServers:
     command: npx
     args:
       - -y
-      - fetchsandbox-mcp
+      - fetchsandbox-mcp@latest
 ```
 
 Restart your IDE.
@@ -96,7 +100,7 @@ File: `~/.codex/config.toml`
 ```toml
 [mcp_servers.fetchsandbox]
 command = "npx"
-args = ["-y", "fetchsandbox-mcp"]
+args = ["-y", "fetchsandbox-mcp@latest"]
 ```
 
 Restart Codex.
@@ -111,7 +115,7 @@ File: `~/.config/zed/settings.json`
     "fetchsandbox": {
       "command": {
         "path": "npx",
-        "args": ["-y", "fetchsandbox-mcp"]
+        "args": ["-y", "fetchsandbox-mcp@latest"]
       }
     }
   }
@@ -127,7 +131,7 @@ GitHub Copilot doesn't currently support the Model Context Protocol. Track [gith
 If your agent speaks MCP, it accepts a stdio command. Use:
 
 - Command: `npx`
-- Args: `["-y", "fetchsandbox-mcp"]`
+- Args: `["-y", "fetchsandbox-mcp@latest"]`
 
 ## Try it now
 
@@ -189,7 +193,7 @@ spec_id: "<id from import_spec>"
 
 ### `run_workflow`
 
-Execute one workflow and return the step-by-step request/response trace. Template variables (`{{step1.id}}`) are resolved automatically between steps.
+Execute one workflow and return the step-by-step request/response trace. Template variables (`{{step1.id}}`) are resolved automatically between steps. The response now includes a `share_url` per run — a public receipt URL you can paste into a PR or share with a teammate.
 
 ```
 sandbox_id:    "<id from import_spec>"
@@ -213,12 +217,17 @@ To opt out:
 export FETCHSANDBOX_TELEMETRY=0
 ```
 
+## Want to see it catch real bugs?
+
+Try the **[FetchSandbox Playground](https://github.com/fetchsandbox/playground)** — five small brownfield apps with planted bugs in real API integrations (Stripe webhook dedup, Resend bounce drops, Clerk JWT verification, AgentMail attachment handling, Surge opt-out). Clone, run, point your agent at one, and see whether FetchSandbox catches the bug. PRs with your session findings welcome.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
 
 ## Links
 
-- [FetchSandbox](https://fetchsandbox.com)
-- [Source code](https://github.com/fetchsandbox/mcp)
-- [Issues](https://github.com/fetchsandbox/mcp/issues)
+- [FetchSandbox](https://fetchsandbox.com) — main site, docs, dashboard
+- [Playground](https://github.com/fetchsandbox/playground) — try it on planted bugs
+- [npm package](https://www.npmjs.com/package/fetchsandbox-mcp) — `npx fetchsandbox-mcp@latest`
+- [Issues](https://github.com/fetchsandbox/mcp/issues) — bug reports, feature asks
