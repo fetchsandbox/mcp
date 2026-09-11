@@ -1,0 +1,43 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.fetchsandbox/mcp",
+  "description": "The verification engine for AI agents. Proves a fix: fails on the old code, passes on the new.",
+  "repository": {
+    "url": "https://github.com/fetchsandbox/mcp",
+    "source": "github"
+  },
+  "version": "0.5.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "fetchsandbox-mcp",
+      "version": "0.5.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FETCHSANDBOX_API_KEY",
+          "description": "Optional. Sign in without a browser \u2014 useful in CI. Left unset, the server runs anonymously and asks you to sign in the first time a run produces a receipt.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        },
+        {
+          "description": "Set to '0' to disable anonymous usage telemetry.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "FETCHSANDBOX_TELEMETRY"
+        },
+        {
+          "description": "Override the FetchSandbox backend base URL (defaults to https://fetchsandbox.com). Useful for stage/self-hosted testing.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false,
+          "name": "FETCHSANDBOX_BASE_URL"
+        }
+      ]
+    }
+  ]
+}

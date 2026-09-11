@@ -28,12 +28,14 @@ export interface ListWorkflowsResponse {
 export const listWorkflowsTool = {
   name: "list_workflows",
   description:
-    "List the named, runnable workflows discovered for a previously-imported " +
-    "spec. Workflows are realistic multi-step API journeys (e.g. 'create " +
-    "customer then attach payment method then create subscription'). Use this " +
-    "after import_spec when the user asks 'what can I do?' or 'show me the " +
-    "common flows' or wants to pick one to run. Returns id, name, description, " +
-    "and step count for each workflow.",
+    "List the named, runnable workflows for a previously-imported spec. " +
+    "Workflows are realistic multi-step API journeys (e.g. 'create customer " +
+    "→ attach payment method → create subscription'). Use this after " +
+    "import_spec for exploration (\"what can I do?\", \"show me the flows\") " +
+    "OR before run_all_workflows when the user wants a SCOPED validation: " +
+    "list, filter by user intent (\"checkout\", \"webhooks\"), then pass the " +
+    "matching ids as `workflow_names` to run_all_workflows. " +
+    "Returns: id, name, description, and step count per workflow.",
   inputSchema: {
     type: "object",
     properties: {

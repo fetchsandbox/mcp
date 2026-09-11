@@ -7,7 +7,9 @@
  * Errors are normalized into ToolError so tools can surface them to the
  * agent as readable text instead of a stack trace.
  */
-import { getSessionId } from "./session.js";
+import { detectIde, getSessionId } from "./session.js";
+import { readCredentials } from "./auth.js";
+import { VERSION } from "./version.js";
 
 const DEFAULT_BASE_URL = "https://fetchsandbox.com";
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -31,14 +33,21 @@ export function getBaseUrl(): string {
   return (process.env.FETCHSANDBOX_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
 }
 
-function buildHeaders(extra?: Record<string, string>): Record<string, string> {
+export function buildHeaders(extra?: Record<string, string>): Record<string, string> {
+  const ide = detectIde();
   const headers: Record<string, string> = {
-    "user-agent": `fetchsandbox-mcp/0.1.0 (node ${process.version})`,
+    "user-agent": `fetchsandbox-mcp/${VERSION} (node ${process.version}; ide=${ide})`,
     accept: "application/json",
     ...(extra ?? {}),
   };
   const sid = getSessionId();
   if (sid) headers["x-mcp-session-id"] = sid;
+  headers["x-mcp-client"] = ide;
+  // The session id IS the install id (see auth.ts) and the backend already
+  // reads that header everywhere, so a key is the only thing to add. Absent
+  // credentials send nothing and the request behaves exactly as it did before.
+  const creds = readCredentials();
+  if (creds?.apiKey) headers["authorization"] = `Bearer ${creds.apiKey}`;
   return headers;
 }
 
@@ -120,6 +129,42 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
     path,
   );
   return (await res.json()) as T;
+}
+
+// find_bugs / fix_bug run a code-analysis subprocess on the backend that takes
+// minutes, so they get their own long, no-retry POST (retrying a minutes-long,
+// billable subprocess call would double cost + latency; the backend already
+// handles engine failover internally).
+const LONG_TIMEOUT_MS = 15 * 60_000;
+
+export async function postJsonLong<T>(
+  path: string,
+  body: unknown,
+  timeoutMs: number = LONG_TIMEOUT_MS,
+): Promise<T> {
+  const url = `${getBaseUrl()}${path}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: buildHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) throw new ToolError(await readErrorMessage(res), res.status);
+    return (await res.json()) as T;
+  } catch (e) {
+    if (e instanceof ToolError) throw e;
+    if ((e as Error).name === "AbortError") {
+      throw new ToolError(
+        `Request timed out after ${Math.round(timeoutMs / 60000)}min: POST ${path}`,
+      );
+    }
+    throw new ToolError(`Network error calling ${path}: ${(e as Error).message}`);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function getJson<T>(path: string): Promise<T> {

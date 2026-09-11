@@ -1,0 +1,58 @@
+# Publish server.json to the official MCP registry.
+#
+# WHY A WORKFLOW AND NOT `mcp-publisher login github`
+# ---------------------------------------------------
+# The interactive device flow cannot publish an ORG namespace. The registry
+# authenticates with a PRIVATE GitHub App, so its user token only sees orgs the
+# app is installed on — and a private app cannot be installed on someone else's
+# org. Owner role, public membership and re-authenticating all make no
+# difference; the token is minted without the org claim either way.
+#
+# Known and open upstream: modelcontextprotocol/registry #1537, #1527, #1551,
+# #1468 (and #1483, which is about the 403's misleading advice).
+#
+# OIDC sidesteps it. Running inside this repo, GitHub issues a token whose
+# claims name the repository, and the registry trusts THAT to prove the
+# io.github.fetchsandbox namespace — it never has to ask which orgs a user
+# belongs to. Confirmed working by another maintainer in #1537.
+name: publish-registry
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      # The whole point: without id-token the OIDC token is never issued and
+      # the publish falls back to the broken path.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mcp-publisher
+        run: |
+          curl -sSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_amd64.tar.gz" \
+            | tar xz mcp-publisher
+          sudo mv mcp-publisher /usr/local/bin/
+
+      - name: Check server.json agrees with package.json
+        # A registry entry pointing at a version npm does not serve is worse
+        # than a stale one: it 404s for anyone who follows it.
+        run: |
+          SERVER_VERSION=$(node -p "require('./server.json').version")
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "server.json=$SERVER_VERSION  package.json=$PKG_VERSION"
+          test "$SERVER_VERSION" = "$PKG_VERSION"
+
+      - name: Validate against the published registry schema
+        run: mcp-publisher validate
+
+      - name: Authenticate via OIDC
+        run: mcp-publisher login github-oidc
+
+      - name: Publish
+        run: mcp-publisher publish

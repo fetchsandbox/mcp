@@ -1,26 +1,21 @@
 # fetchsandbox-mcp
 
-Turn any OpenAPI spec into a working sandbox your AI agent can use, right from your IDE.
+<a href="https://www.producthunt.com/products/fetchsandbox?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-fetchsandbox-mcp" target="_blank" rel="noopener noreferrer"><img alt="FetchSandbox MCP - The MCP that proves your AI's integration fixes work | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1223147&theme=light"></a>
 
-This is the Model Context Protocol (MCP) server for [FetchSandbox](https://fetchsandbox.com). It exposes three tools that let any MCP-compatible agent ingest an OpenAPI spec, list its workflows, and run them — with realistic, schema-validated responses for every endpoint.
+MCP server for [FetchSandbox](https://fetchsandbox.com).
 
-> ⭐ **If FetchSandbox saves you a debugging session, star this repo.** It helps people find the project and helps us prioritize what to build next.
+Your agent writes an integration. This checks whether it actually works — against
+a sandbox that behaves like the real provider, including the failures: retried
+webhooks, declined cards, rate limits, auth errors.
 
-## Why
+When it finds a bug, it can propose a fix and then prove it: the same failure is
+run against your code before and after the diff. Green only if it reproduced
+first and stopped after. You get a receipt URL either way.
 
-Agents read raw OpenAPI specs and hallucinate. They guess field names, invent IDs that won't exist, and produce broken curl commands. FetchSandbox turns the spec into a stateful, AJV-validated sandbox so the agent can actually call the API and see real-shaped responses.
+## Install
 
-Plug it into your IDE once, and any time you ask your agent "let me try the Stripe API" or "show me the GitHub issue lifecycle," it can do that — for real, end-to-end.
-
-## Install — by agent
-
-The MCP runs as a stdio process spawned by your IDE. There's nothing to install globally — `npx` runs the published version on demand. We recommend pinning to `@latest` so each session auto-upgrades to the current release; otherwise npm caches the first version it saw and silently drifts behind.
-
-Pick your tool below, paste the snippet, restart.
-
-### Claude Desktop
-
-File: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows)
+Same stdio command everywhere. `npx` fetches the current version, so there's
+nothing to install.
 
 ```json
 {
@@ -33,201 +28,112 @@ File: `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) 
 }
 ```
 
-Quit and reopen Claude Desktop (Cmd+Q, then reopen — not just close window).
+| Client | File |
+|---|---|
+| Claude Code | `~/.claude/settings.json`, or `.mcp.json` in the repo |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Cursor | `~/.cursor/mcp.json`, or `.cursor/mcp.json` in the repo |
+| Zed | `~/.config/zed/settings.json`, under `context_servers` |
+| Codex | `~/.codex/config.toml`, as `[mcp_servers.fetchsandbox]` |
 
-### Claude Code
+Restart the client afterwards. Anything else that speaks MCP takes the same
+command and args.
 
-User-level (all projects): `~/.claude/settings.json`. Or project-level: `.mcp.json` in the repo root.
+## Using it
 
-```json
-{
-  "mcpServers": {
-    "fetchsandbox": {
-      "command": "npx",
-      "args": ["-y", "fetchsandbox-mcp@latest"]
-    }
-  }
-}
+Describe the problem the way you'd describe it to a colleague. You don't need to
+name a tool.
+
+> Customers are reporting more seats than they bought after a Paddle payment.
+> Can you find out why?
+
+The agent works through: route the symptom, reproduce it against the provider
+sandbox, read your code, get a fix, prove the fix on your code. Each step hands
+back what the next one needs.
+
+One thing worth knowing, because it's easy to get backwards: `prove_fix` needs
+the **unfixed** tree. Run it before you write the diff to disk, or there's no
+bug left to reproduce and no proof to be had.
+
+## Accounts
+
+You don't need one to start. Install it, ask a question, and everything runs.
+
+The first time a run produces something worth keeping — a receipt, or a set of
+findings — you'll get a short code and a link. Signing in takes about twenty
+seconds and does two things: the evidence behind your receipts stops being
+archived after 15 days, and the runs from that machine collect in one place.
+You'll be asked at most once a day, and never once you're signed in.
+
+For CI, or anywhere a browser isn't available, set a key instead:
+
+```
+FETCHSANDBOX_API_KEY=fsk_...
 ```
 
-Restart the Claude Code session.
-
-### Cursor
-
-File: `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project)
-
-```json
-{
-  "mcpServers": {
-    "fetchsandbox": {
-      "command": "npx",
-      "args": ["-y", "fetchsandbox-mcp@latest"]
-    }
-  }
-}
-```
-
-Restart Cursor.
-
-### Cline (VS Code extension)
-
-Open the Cline panel → settings cog → MCP Servers → add a new server with:
-
-- Command: `npx`
-- Args: `-y fetchsandbox-mcp@latest`
-
-Reload the VS Code window.
-
-### Continue.dev
-
-File: `~/.continue/config.yaml`
-
-```yaml
-mcpServers:
-  - name: fetchsandbox
-    command: npx
-    args:
-      - -y
-      - fetchsandbox-mcp@latest
-```
-
-Restart your IDE.
-
-### Codex CLI (OpenAI)
-
-File: `~/.codex/config.toml`
-
-```toml
-[mcp_servers.fetchsandbox]
-command = "npx"
-args = ["-y", "fetchsandbox-mcp@latest"]
-```
-
-Restart Codex.
-
-### Zed
-
-File: `~/.config/zed/settings.json`
-
-```json
-{
-  "context_servers": {
-    "fetchsandbox": {
-      "command": {
-        "path": "npx",
-        "args": ["-y", "fetchsandbox-mcp@latest"]
-      }
-    }
-  }
-}
-```
-
-### GitHub Copilot
-
-GitHub Copilot doesn't currently support the Model Context Protocol. Track [github/copilot#feedback](https://github.com/orgs/community/discussions) for updates. In the meantime, run any MCP-compatible chat (Claude Code, Cursor, Cline) alongside Copilot.
-
-### Anything else (Roo, Goose, etc.)
-
-If your agent speaks MCP, it accepts a stdio command. Use:
-
-- Command: `npx`
-- Args: `["-y", "fetchsandbox-mcp@latest"]`
-
-## Try it now
-
-After restarting your agent, paste any of these prompts. Each hits a hand-curated workflow with realistic IDs and real state transitions.
-
-### Stripe — accept a payment
-
-> Use fetchsandbox to import the Stripe spec from `https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json` and run the `accept_payment` workflow. Show me the trace.
-
-The agent imports 587 endpoints, matches the bundled curated Stripe sandbox, and runs a 6-step workflow: create customer (`cus_…`) → create PaymentIntent (`pi_…`, `$49.99 USD`, `requires_payment_method`) → confirm (`requires_capture`) → capture (`succeeded`) → retrieve → verify webhooks (`payment_intent.created`, `payment_intent.succeeded`).
-
-### Twilio — send an SMS
-
-> Use fetchsandbox to import the Twilio Messaging spec from `https://raw.githubusercontent.com/twilio/twilio-oai/main/spec/yaml/twilio_messaging_v1.yaml` and run the `send_sms` workflow.
-
-The agent imports the messaging API and runs a curated send-and-verify flow with realistic Twilio-formatted message SIDs (`SM…`).
-
-### GitHub — issue lifecycle
-
-> Use fetchsandbox to import the GitHub REST API from `https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json` and run the `issue_lifecycle` workflow.
-
-The agent walks the create → comment → close → reopen flow against a real-shaped GitHub sandbox.
-
-### Paddle — paste-content variant
-
-If a vendor doesn't publish their spec at a stable URL (Paddle, Notion, Linear), paste the content directly:
-
-> Here's the Paddle Billing OpenAPI spec — `<paste JSON or YAML>`. Use fetchsandbox to import it and run the `subscriptions_canceled` workflow.
-
-Same engine path; same curated quality if the spec's `info.title` matches a bundled config.
-
-### Any other API
-
-> Use fetchsandbox to import `<your OpenAPI URL>` — list the workflows and tell me which is most interesting.
-
-For specs we don't have curated configs for, the engine auto-enumerates `create + verify` workflows for every detected resource. Honest about what it shows: UUIDs instead of vendor-style IDs, generic enum values instead of API-specific ones — but the request/response shape and template substitution between steps still work.
+The key is written to `~/.fetchsandbox/credentials.json` when you sign in from
+an editor; the environment variable always wins.
 
 ## Tools
 
-### `import_spec`
+Start with `guide`. It picks the right ones for what you asked.
 
-Ingest an OpenAPI 3.x spec and get a sandbox you can call. Pass either a public URL or pasted content.
+**Finding and fixing**
 
-```
-url:     "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json"
-content: "<paste OpenAPI JSON or YAML here>"
-name:    "Optional friendly name"
-```
+| Tool | What it does | Arguments |
+|---|---|---|
+| `guide` | Routes a symptom to a spec, workflow and known failure class | `intent*`, `hints` |
+| `find_bugs` | Audits your project against known integration failure classes. Local and private code is fine — nothing needs to be pushed | `path`, `spec`, `timeout_s` |
+| `fix_bug` | Returns a `git diff` for one finding. Doesn't touch your files | `bug*`, `fix_pattern`, `path`, `spec`, `timeout_s` |
+| `prove_fix` | Runs the failure against your code before and after the diff. Green only on a measured flip | `diff*`, `bug`, `scenario`, `sandbox_id`, `path`, `timeout_s` |
 
-Returns `spec_id`, `sandbox_id`, `base_url` (proxy that serves real-shaped responses), `workflows_preview` (first 10), `matched_bundled` (true if we matched a curated config), and a `dashboard_url` to view everything in the browser.
+**Running the sandbox**
 
-### `list_workflows`
+| Tool | What it does | Arguments |
+|---|---|---|
+| `quickrun` | Runs a workflow against a bundled spec in one call. Returns `sandbox_id` and `flow_run_id` | `spec_slug*`, `workflow_name*`, `scenario` |
+| `verify_behavior` | Shows a failure class on reference handlers — buggy vs fixed | `bug_pattern_id*`, `prompt`, `sandbox_id`, `flow_run_id` |
+| `run_workflow` | Runs one workflow on a sandbox you already have | `sandbox_id*`, `workflow_name*`, `scenario` |
+| `run_all_workflows` | Runs several in one call | `sandbox_id*`, `workflow_names` |
+| `list_workflows` | Workflows available for a spec | `spec_id*` |
+| `list_runs` | Past runs for a sandbox | `sandbox_id*`, `limit` |
 
-List the named, runnable workflows the engine inferred or curated for an imported spec.
+**Bringing your own spec**
 
-```
-spec_id: "<id from import_spec>"
-```
+| Tool | What it does | Arguments |
+|---|---|---|
+| `list_specs` | Specs already available | `filter` |
+| `import_spec` | Ingests an OpenAPI 3.x spec by URL or pasted content. Returns a callable sandbox | `url`, `content`, `name` |
+| `submit_proof` | Publishes a receipt for a run | `sandbox_id`, `flow_run_id`, `bug_pattern_id`, `summary`, `proofs` |
+| `coach` | Multi-turn help building an integration | `intent`, `session_id`, `user_response`, `context` |
 
-### `run_workflow`
-
-Execute one workflow and return the step-by-step request/response trace. Template variables (`{{step1.id}}`) are resolved automatically between steps. The response now includes a `share_url` per run — a public receipt URL you can paste into a PR or share with a teammate.
-
-```
-sandbox_id:    "<id from import_spec>"
-workflow_name: "<id or name from list_workflows>"
-```
+`*` = required.
 
 ## Configuration
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `FETCHSANDBOX_BASE_URL` | `https://fetchsandbox.com` | Override for stage testing or self-hosted backends. |
-| `FETCHSANDBOX_TELEMETRY` | (on) | Set to `0` to disable anonymous usage telemetry. |
+| `FETCHSANDBOX_API_KEY` | none | Sign in without a browser. Overrides the stored credentials |
+| `FETCHSANDBOX_BASE_URL` | `https://fetchsandbox.com` | Point at a different backend |
+| `FETCHSANDBOX_TELEMETRY` | on | Set to `0` to turn off |
 
-### What we record
+Telemetry records an opaque per-machine id (a random UUID in
+`~/.fetchsandbox/session.json`), the tool name, latency, and whether the call
+succeeded. Not spec content, not request bodies, not credentials. It's how we
+count sessions and see which APIs people bring.
 
-When telemetry is on, each tool call records: an opaque per-machine session id (random UUID stored at `~/.fetchsandbox/session.json`), the tool name, latency, success/failure, and the spec URL or `"pasted"`. We do **not** record spec content, request bodies, or credentials. We use this to count daily-active sessions and learn which APIs people are bringing to the platform.
+Once you sign in, calls are also attributed to your account — that is the point
+of signing in, and it is what lets your runs appear in one place.
 
-To opt out:
-
-```bash
-export FETCHSANDBOX_TELEMETRY=0
-```
-
-## Want to see it catch real bugs?
-
-Try the **[FetchSandbox Playground](https://github.com/fetchsandbox/playground)** — five small brownfield apps with planted bugs in real API integrations (Stripe webhook dedup, Resend bounce drops, Clerk JWT verification, AgentMail attachment handling, Surge opt-out). Clone, run, point your agent at one, and see whether FetchSandbox catches the bug. PRs with your session findings welcome.
+`FETCHSANDBOX_TELEMETRY=0` stops the per-machine id being sent, so calls are no
+longer linked to your machine. It does not make a call invisible: the server
+still records that a tool ran, because it is the thing running it. And if you
+are signed in, your key identifies you regardless — that is what a key is. To
+be unattributed, don't sign in.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
 
-## Links
-
-- [FetchSandbox](https://fetchsandbox.com) — main site, docs, dashboard
-- [Playground](https://github.com/fetchsandbox/playground) — try it on planted bugs
-- [npm package](https://www.npmjs.com/package/fetchsandbox-mcp) — `npx fetchsandbox-mcp@latest`
-- [Issues](https://github.com/fetchsandbox/mcp/issues) — bug reports, feature asks
+- [fetchsandbox.com](https://fetchsandbox.com)
+- [Source](https://github.com/fetchsandbox/mcp) · [Issues](https://github.com/fetchsandbox/mcp/issues)

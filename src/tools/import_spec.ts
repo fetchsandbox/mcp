@@ -32,16 +32,16 @@ export const importSpecTool = {
   name: "import_spec",
   description:
     "Ingest an OpenAPI spec and get a working sandbox you can call immediately. " +
-    "Use this when the user wants to try, test, or learn an API. Accepts a public " +
-    "URL to an OpenAPI 3.x JSON or YAML file (e.g. raw.githubusercontent.com link), " +
-    "or pasted spec content as a string. Returns a sandbox_id that can be used with " +
-    "list_workflows and run_workflow, plus a base_url that proxies real-feeling, " +
-    "schema-validated responses for every endpoint in the spec. " +
-    "Pick this tool the moment the user mentions an OpenAPI URL or pastes a spec. " +
-    "Note on URLs: this MCP runs locally (in the user's IDE process), but the spec " +
-    "fetch happens on the FetchSandbox backend — so private addresses (localhost, " +
-    "127.0.0.1, 10.x, 192.168.x, internal company hosts) will be rejected. For those, " +
-    "have the user paste the spec content directly via the `content` parameter.",
+    "REQUIRED: pass EITHER `url` OR `content` — never just `name` alone (name is " +
+    "a display label, not a lookup). If the user mentions a popular API by name " +
+    "(Stripe, GitHub, Twilio, Notion, OpenAI, etc.), FIRST call `list_specs` " +
+    "with a filter to confirm it's in the catalog, then call import_spec with " +
+    "that vendor's public OpenAPI URL (e.g. Stripe: " +
+    "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json). " +
+    "The backend content-hashes the spec and auto-matches to the bundled sandbox " +
+    "when applicable. Returns sandbox_id, workflows_preview, and a base_url that " +
+    "proxies schema-validated responses. Private URLs (localhost, 10.x, 192.168.x) " +
+    "are rejected by the backend — use `content` to paste those inline.",
   inputSchema: {
     type: "object",
     properties: {
@@ -60,8 +60,9 @@ export const importSpecTool = {
       name: {
         type: "string",
         description:
-          "Optional friendly name for the spec. Defaults to info.title from the " +
-          "spec, or the URL hostname.",
+          "Optional DISPLAY label only — NOT a lookup key. Defaults to " +
+          "info.title from the spec. To resolve a known API by name " +
+          "(\"Stripe\", \"GitHub\"), call list_specs first.",
       },
     },
     additionalProperties: false,

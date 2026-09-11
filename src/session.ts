@@ -6,6 +6,10 @@
  *
  * Disabled entirely when FETCHSANDBOX_TELEMETRY=0 — in that case sessionId
  * returns undefined and the client omits the header.
+ *
+ * Also detects the host IDE (Cursor / Claude Code / Cline / etc.) by
+ * sniffing env vars + parent process. Returned as a stable token usable
+ * in the user-agent string for backend cohort splits in PostHog.
  */
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -43,4 +47,71 @@ export function getSessionId(): string | undefined {
   }
   cached = id;
   return cached;
+}
+
+let cachedIde: string | null = null;
+
+/**
+ * Best-effort host-IDE detection. Returns a short lowercase token:
+ * "cursor" | "claude-code" | "cline" | "vscode" | "windsurf" | "chatgpt" |
+ * "zed" | "unknown".
+ *
+ * Detection order matters — env vars are stronger signals than parent
+ * process name (which can be misleading on macOS where IDEs spawn
+ * launchers). Falls back to "unknown" rather than guessing.
+ */
+export function detectIde(): string {
+  if (cachedIde !== null) return cachedIde;
+  const env = process.env;
+
+  // Cursor sets these in the MCP server's env.
+  if (env.CURSOR_TRACE_ID || env.CURSOR_AGENT || env.CURSOR_SESSION_ID) {
+    cachedIde = "cursor";
+    return cachedIde;
+  }
+
+  // Claude Code (Anthropic CLI / IDE extension).
+  if (
+    env.CLAUDE_CODE_SESSION_ID ||
+    env.CLAUDE_CODE_PROJECT_DIR ||
+    env.CLAUDECODE === "1" ||
+    env.ANTHROPIC_CLI === "1"
+  ) {
+    cachedIde = "claude-code";
+    return cachedIde;
+  }
+
+  // Windsurf (Codeium).
+  if (env.WINDSURF_SESSION_ID || env.CODEIUM_WINDSURF) {
+    cachedIde = "windsurf";
+    return cachedIde;
+  }
+
+  // Zed.
+  if (env.ZED_TERM || env.ZED_SESSION_ID) {
+    cachedIde = "zed";
+    return cachedIde;
+  }
+
+  // Cline runs inside VSCode; fingerprint = CLINE_* env var or
+  // VSCode + a known Cline marker.
+  if (env.CLINE_VERSION || env.CLINE_SESSION_ID) {
+    cachedIde = "cline";
+    return cachedIde;
+  }
+
+  // Generic VSCode-hosted MCP (no Cline-specific markers).
+  if (env.VSCODE_PID || env.VSCODE_IPC_HOOK || env.VSCODE_INJECTION) {
+    cachedIde = "vscode";
+    return cachedIde;
+  }
+
+  // ChatGPT desktop.
+  if (env.CHATGPT_DESKTOP || env.OPENAI_DESKTOP) {
+    cachedIde = "chatgpt";
+    return cachedIde;
+  }
+
+  cachedIde = "unknown";
+  return cachedIde;
 }
