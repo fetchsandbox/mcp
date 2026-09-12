@@ -2,6 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.fetchsandbox/mcp",
   "description": "A deterministic eval engine for coding agents. Proves a fix: fails on the old code, passes on new.",
+  "title": "FetchSandbox",
+  "websiteUrl": "https://fetchsandbox.com",
+  "icons": [
+    {
+      "src": "https://avatars.githubusercontent.com/u/267827798?s=512&v=4",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
+      ]
+    }
+  ],
   "repository": {
     "url": "https://github.com/fetchsandbox/mcp",
     "source": "github"
