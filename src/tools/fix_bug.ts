@@ -13,7 +13,7 @@
  */
 import { ToolError } from "../client.js";
 import { startAndPoll } from "./jobs.js";
-import { packDirToBase64 } from "./pack.js";
+import { packDirToBase64, resolveWorkspaceDir } from "./pack.js";
 
 export interface FixBugInput {
   bug: string; // the specific bug to fix (file:line + description)
@@ -92,7 +92,7 @@ export async function runFixBug(input: FixBugInput): Promise<{
   if (!input.bug || !input.bug.trim()) {
     throw new ToolError("bug is required — pass the specific finding to fix.");
   }
-  const dir = input.path && input.path.trim() ? input.path.trim() : process.cwd();
+  const dir = resolveWorkspaceDir(input.path);
   const { b64, bytes } = packDirToBase64(dir);
   const timeout_s = Math.min(Math.max(input.timeout_s ?? 300, 30), 600);
   const body: Record<string, unknown> = {

@@ -13,7 +13,7 @@
  */
 import { ToolError } from "../client.js";
 import { startAndPoll } from "./jobs.js";
-import { packDirToBase64 } from "./pack.js";
+import { packDirToBase64, resolveWorkspaceDir } from "./pack.js";
 
 export interface FindBugsInput {
   path?: string; // project dir to analyze; defaults to the MCP server's cwd
@@ -81,10 +81,10 @@ export async function runFindBugs(input: FindBugsInput): Promise<{
   prove_instructions?: unknown;
   engine: string;
   packed_bytes: number;
-  /** Backend-authored sign-in line. Declared here or tsc drops it. */
-  notice?: string;
+  /** Backend-authored text addressed to the HUMAN. Declared or tsc drops it. */
+  message_for_user?: string;
 }> {
-  const dir = input.path && input.path.trim() ? input.path.trim() : process.cwd();
+  const dir = resolveWorkspaceDir(input.path);
   const { b64, bytes } = packDirToBase64(dir);
   const timeout_s = Math.min(Math.max(input.timeout_s ?? 300, 30), 600);
   const body: Record<string, unknown> = {
@@ -122,7 +122,12 @@ export async function runFindBugs(input: FindBugsInput): Promise<{
     next_actions: raw.next_actions ?? undefined,
     // THE FIFTH WHITELIST. Every field the backend adds must be named
     // here or it is invisible — this is what hid next_actions for weeks.
-    notice: (raw.notice as string) ?? undefined,
+    //
+    // Renamed from `notice` on 2026-09-12. A persona run proved the old name
+    // was invisible in a different way: the field arrived, and the agent
+    // relayed none of it to the person. `notice` sat beside spec and
+    // confidence, so it read as data to act on rather than words to pass on.
+    message_for_user: (raw.message_for_user as string) ?? undefined,
     prove_instructions: raw.prove_instructions ?? undefined,
     engine: (raw.engine as string) ?? "fetchsandbox",
     packed_bytes: bytes,

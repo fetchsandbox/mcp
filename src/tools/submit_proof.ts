@@ -50,6 +50,8 @@ export interface SubmitProofResult {
 export const submitProofTool = {
   name: "submit_proof",
   description:
+    "Receipts are readable by anyone with the link — do not attach bodies the " +
+    "user would not paste into a public PR. " +
     "Attach REAL before/after evidence from the USER's actual app to the run " +
     "receipt. Use this AFTER you've fixed the bug and re-run the app: it makes " +
     "the receipt show their own code's behavior (before your fix vs after), " +

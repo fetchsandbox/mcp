@@ -83,7 +83,7 @@ Start with `guide`. It picks the right ones for what you asked.
 | Tool | What it does | Arguments |
 |---|---|---|
 | `guide` | Routes a symptom to a spec, workflow and known failure class | `intent*`, `hints` |
-| `find_bugs` | Audits your project against known integration failure classes. Local and private code is fine — nothing needs to be pushed | `path`, `spec`, `timeout_s` |
+| `find_bugs` | Audits your project against known integration failure classes. No git remote needed — it reads the directory you point it at | `path`, `spec`, `timeout_s` |
 | `fix_bug` | Returns a `git diff` for one finding. Doesn't touch your files | `bug*`, `fix_pattern`, `path`, `spec`, `timeout_s` |
 | `prove_fix` | Runs the failure against your code before and after the diff. Green only on a measured flip | `diff*`, `bug`, `scenario`, `sandbox_id`, `path`, `timeout_s` |
 
@@ -108,6 +108,36 @@ Start with `guide`. It picks the right ones for what you asked.
 | `coach` | Multi-turn help building an integration | `intent`, `session_id`, `user_response`, `context` |
 
 `*` = required.
+
+## What leaves your machine
+
+`find_bugs`, `fix_bug` and `prove_fix` package the directory you point them at
+and upload it for analysis. Worth saying plainly, because the previous wording
+here implied the opposite.
+
+Excluded before packing: `.git`, `node_modules` and build output, agent
+instruction files, and anything credential-shaped — `.env*`, `*.pem`, `*.key`,
+`id_rsa*`, `*.tfstate`, `.npmrc`, `.aws`, `.ssh` and more.
+
+Then the archive is read back and **refused** if it still contains something
+shaped like a live credential, wherever it lives and whatever it is called. A
+key in `config/local.yml` stops the upload and names the file. Patterns only
+cover what someone thought of; the scan is there for the rest.
+
+If you would rather nothing left at all, the analysis needs the source today.
+That is the honest state.
+
+### Receipts are public to anyone holding the link
+
+`submit_proof` attaches the real requests and responses from your app's
+before/after run to the receipt page, so the receipt shows your code's own
+behaviour. That page is served without a login — that is the point of it, you
+drop the link in a PR — which means the bodies on it are readable by anyone who
+has the link.
+
+The probes run against the FetchSandbox twin, not your provider, so the data is
+sandbox data. But the request bodies are the ones your app built, and those can
+carry values from your config. Look at a receipt before you share it.
 
 ## Configuration
 

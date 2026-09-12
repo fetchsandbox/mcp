@@ -1,6 +1,6 @@
 {
   "name": "fetchsandbox-mcp",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "mcpName": "io.github.fetchsandbox/mcp",
   "description": "The verification engine for AI agents. Runs your integration against every service it touches with failures injected on purpose, then proves a fix: the same scenario fails on the old code and passes on the new, with a receipt.",
   "license": "MIT",
@@ -43,7 +43,8 @@
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "test": "npm run build && node --test test/*.test.mjs",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm test",
+    "mcpb": "node scripts/build-mcpb.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"

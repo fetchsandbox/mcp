@@ -14,7 +14,7 @@
 import { ToolError } from "../client.js";
 import { lastTwin } from "../twin.js";
 import { startAndPoll } from "./jobs.js";
-import { packDirToBase64 } from "./pack.js";
+import { packDirToBase64, resolveWorkspaceDir } from "./pack.js";
 
 export interface ProveFixInput {
   diff: string; // the fix diff from fix_bug
@@ -75,16 +75,29 @@ export async function runProveFix(input: ProveFixInput): Promise<{
   reproduced?: boolean;
   verified?: boolean;
   reason?: string;
+  /**
+   * Why we could not recreate and run the app, in words for the developer.
+   * Declared or tsc drops it.
+   */
+  cannot_run?: string;
+  /**
+   * The backend's instruction to the AGENT reading this result — the lever that
+   * stops an autonomous agent writing its own ungated harness and reporting a
+   * false green. The backend has always sent it. Until 2026-09-12 this type and
+   * the return below both omitted it, so it was dropped at the client and no
+   * agent ever saw it.
+   */
+  agent_guidance?: string;
   scenario?: unknown;
   receipt_url?: string;
   engine: string;
-  /** Backend-authored sign-in line. Declared here or tsc drops it. */
-  notice?: string;
+  /** Backend-authored text addressed to the HUMAN. Declared or tsc drops it. */
+  message_for_user?: string;
 }> {
   if (!input.diff || !input.diff.trim()) {
     throw new ToolError("diff is required — pass the diff from fix_bug.");
   }
-  const dir = input.path && input.path.trim() ? input.path.trim() : process.cwd();
+  const dir = resolveWorkspaceDir(input.path);
   const { b64 } = packDirToBase64(dir);
   const timeout_s = Math.min(Math.max(input.timeout_s ?? 300, 30), 600);
   const body: Record<string, unknown> = {
@@ -123,11 +136,18 @@ export async function runProveFix(input: ProveFixInput): Promise<{
     reproduced: raw.reproduced as boolean | undefined,
     verified: raw.verified as boolean | undefined,
     reason: raw.reason as string | undefined,
+    cannot_run: raw.cannot_run as string | undefined,
+    agent_guidance: raw.agent_guidance as string | undefined,
     scenario: raw.scenario,
     receipt_url: raw.receipt_url as string | undefined,
     engine: (raw.engine as string) ?? "fetchsandbox",
     // THE FIFTH WHITELIST. Every field the backend adds must be named
     // here or it is invisible — this is what hid next_actions for weeks.
-    notice: (raw.notice as string) ?? undefined,
+    //
+    // Renamed from `notice` on 2026-09-12. A persona run proved the old name
+    // was invisible in a different way: the field arrived, and the agent
+    // relayed none of it to the person. `notice` sat beside spec and
+    // confidence, so it read as data to act on rather than words to pass on.
+    message_for_user: (raw.message_for_user as string) ?? undefined,
   };
 }
