@@ -56,22 +56,79 @@ const server = new Server(
   { capabilities: { tools: {} } },
 );
 
+/**
+ * Behaviour hints for each tool, per the MCP spec.
+ *
+ * These are ADVICE TO AN AGENT about what a call will do, not decoration. A
+ * wrong hint is worse than a missing one: `readOnlyHint: true` on something
+ * that writes tells an agent it is safe to call speculatively, and it will.
+ *
+ * So the line drawn here is "does calling this change something the USER would
+ * care about":
+ *
+ *   read-only   listing, routing, analysing. find_bugs reads the code and
+ *               reports; fix_bug PROPOSES a diff and never applies it.
+ *   writes      anything that boots a sandbox, executes code, or puts
+ *               something on a receipt.
+ *
+ * `openWorldHint` is true everywhere — every tool talks to the FetchSandbox
+ * backend, so none of them are closed-world.
+ *
+ * `destructiveHint` is false everywhere and that is deliberate: nothing here
+ * deletes or overwrites the user's data. submit_proof is the one to watch — it
+ * writes to a receipt page that has no login — but publishing is not
+ * destruction, and the honest place to warn about that is the tool
+ * description, which it now does.
+ */
+const ANNOTATIONS: Record<string, {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+  idempotentHint: boolean;
+  openWorldHint: boolean;
+}> = {
+  // Read, route, analyse — no state the user owns changes.
+  coach:          { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
+  guide:          { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
+  list_specs:     { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
+  list_workflows: { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
+  list_runs:      { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
+  find_bugs:      { readOnlyHint: true,  destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  // Proposes a diff. It does not apply it — applying is the agent's job.
+  fix_bug:        { readOnlyHint: true,  destructiveHint: false, idempotentHint: false, openWorldHint: true },
+
+  // These boot sandboxes, execute code, or write to a receipt.
+  quickrun:         { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  import_spec:      { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  run_workflow:     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  run_all_workflows:{ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  prove_fix:        { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  verify_behavior:  { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  // Writes to a receipt page that anyone with the link can read.
+  submit_proof:     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+};
+
+/** Attach the hint for a tool, leaving the tool definitions themselves alone. */
+function annotated<T extends { name: string }>(tool: T): T {
+  const a = ANNOTATIONS[tool.name];
+  return a ? ({ ...tool, annotations: a } as T) : tool;
+}
+
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
-    coachTool, // listed FIRST — the conversational entry point
-    findBugsTool, // investigate: find production bugs in the user's own code
-    fixBugTool, // fix: grounded remediation → git diff proposal
-    proveFixTool, // prove: run FS's scenario buggy vs fixed → honest-green gate
-    guideTool, // the deterministic single-shot router (still useful)
-    quickrunTool, // run a bundled spec by slug — no import_spec/sandbox needed
-    listSpecsTool,
-    importSpecTool,
-    listWorkflowsTool,
-    runAllWorkflowsTool,
-    runWorkflowTool,
-    verifyBehaviorTool,
-    submitProofTool, // attach the REAL app's before/after to the receipt
-    listRunsTool,
+    annotated(coachTool), // listed FIRST — the conversational entry point
+    annotated(findBugsTool), // investigate: find production bugs in the user's own code
+    annotated(fixBugTool), // fix: grounded remediation → git diff proposal
+    annotated(proveFixTool), // prove: run FS's scenario buggy vs fixed → honest-green gate
+    annotated(guideTool), // the deterministic single-shot router (still useful)
+    annotated(quickrunTool), // run a bundled spec by slug — no import_spec/sandbox needed
+    annotated(listSpecsTool),
+    annotated(importSpecTool),
+    annotated(listWorkflowsTool),
+    annotated(runAllWorkflowsTool),
+    annotated(runWorkflowTool),
+    annotated(verifyBehaviorTool),
+    annotated(submitProofTool), // attach the REAL app's before/after to the receipt
+    annotated(listRunsTool),
   ],
 }));
 

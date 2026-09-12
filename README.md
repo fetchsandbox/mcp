@@ -2,6 +2,8 @@
 
 <a href="https://www.producthunt.com/products/fetchsandbox?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-fetchsandbox-mcp" target="_blank" rel="noopener noreferrer"><img alt="FetchSandbox MCP - The MCP that proves your AI's integration fixes work | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1223147&theme=light"></a>
 
+Also on [Smithery](https://smithery.ai/servers/fetchsandbox/mcp), [npm](https://www.npmjs.com/package/fetchsandbox-mcp) and the [official MCP registry](https://registry.modelcontextprotocol.io/v0/servers?search=fetchsandbox).
+
 A deterministic eval engine for coding agents, as an MCP server for
 [FetchSandbox](https://fetchsandbox.com).
 

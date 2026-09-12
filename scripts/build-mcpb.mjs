@@ -19,8 +19,9 @@
  *   npm run mcpb          # build dist, stage, write manifest, pack
  */
 import { execSync } from "node:child_process";
-import { readFileSync, writeFileSync, rmSync, mkdirSync, cpSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync, mkdirSync, mkdtempSync, cpSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -73,6 +74,8 @@ async function toolsFromServer() {
     return (listed.result?.tools ?? []).map((t) => ({
       name: t.name,
       description: (t.description ?? "").slice(0, 500),
+      inputSchema: t.inputSchema,
+        annotations: t.annotations,  // same story: MCPB rejects it, Smithery scores it
       // Smithery requires this object. An empty schema is still an object,
       // so a tool that takes no arguments does not fail the publish.
     }));
@@ -107,6 +110,7 @@ const manifest = {
   display_name: "FetchSandbox",
   version: pkg.version,
   description: pkg.description,
+    tools: tools.map((t) => ({ name: t.name, description: t.description })),
   long_description:
     "FetchSandbox runs your integration against every service it touches with " +
     "failures injected on purpose — retried webhooks, declined cards, rate " +
@@ -144,9 +148,8 @@ const manifest = {
       required: false,
     },
   },
-  // Deliberately omitted: see the note above. Listing them here fails the
-  // Smithery publish, and leaving them out lets its scan read them from the
-  // server, which cannot drift from what the server actually advertises.
+  // `tools` above is written WITHOUT inputSchema so the MCPB validator passes;
+  // injectInputSchemas() puts it back after packing. See that function.
   compatibility: { runtimes: { node: ">=18" } },
 };
 writeFileSync(join(OUT, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
@@ -155,5 +158,50 @@ sh(`npx --yes @anthropic-ai/mcpb@latest validate ${join(OUT, "manifest.json")}`)
 sh(`npx --yes @anthropic-ai/mcpb@latest pack ${OUT} ${join(ROOT, "fetchsandbox-mcp.mcpb")}`);
 
 if (!existsSync(join(ROOT, "fetchsandbox-mcp.mcpb"))) throw new Error("pack produced no bundle");
+injectInputSchemas(join(ROOT, "fetchsandbox-mcp.mcpb"), tools);
 console.log(`\n✓ fetchsandbox-mcp.mcpb — v${pkg.version}, ${names.length} tools`);
 console.log("  publish:  smithery mcp publish ./fetchsandbox-mcp.mcpb -n <org>/<name>\n");
+
+/**
+ * Put `inputSchema` back into the packed manifest.
+ *
+ * The two specs disagree. Measured 2026-09-12, both sides:
+ *
+ *   MCPB validator    tools.N: Unrecognized key(s) in object: 'inputSchema'
+ *   Smithery publish  Invalid input: expected object, received undefined  (x14)
+ *
+ * One refuses the field the other demands, so no single manifest satisfies
+ * both. Packing without it and injecting after satisfies each in turn.
+ *
+ * Not doing this was not cosmetic. With no tools registered, Smithery scored
+ * Capability Quality 0 of 40 — tool descriptions, parameter descriptions and
+ * naming all score zero when there are no tools to score.
+ *
+ * The comment this replaced said Smithery "populates it by scanning the
+ * server". It does not. That went unnoticed because nothing failed: the
+ * publish succeeded and the listing quietly advertised zero tools.
+ *
+ * If a future MCPB release accepts inputSchema, delete this and put the field
+ * in the manifest directly. Check, do not assume.
+ */
+function injectInputSchemas(bundlePath, tools) {
+  const tmp = mkdtempSync(join(tmpdir(), "mcpb-schemas-"));
+  try {
+    sh(`unzip -q ${JSON.stringify(bundlePath)} -d ${JSON.stringify(tmp)}`);
+    const mfPath = join(tmp, "manifest.json");
+    const mf = JSON.parse(readFileSync(mfPath, "utf8"));
+    mf.tools = tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      // An empty schema is still an object, so a no-argument tool is fine.
+      inputSchema: t.inputSchema ?? { type: "object", properties: {} },
+      ...(t.annotations ? { annotations: t.annotations } : {}),
+    }));
+    writeFileSync(mfPath, JSON.stringify(mf, null, 2) + "\n");
+    rmSync(bundlePath);
+    sh(`zip -q -r ${JSON.stringify(bundlePath)} .`, tmp);
+    console.log(`  + inputSchema injected for ${mf.tools.length} tools`);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
