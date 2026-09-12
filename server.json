@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.fetchsandbox/mcp",
-  "description": "The verification engine for AI agents. Proves a fix: fails on the old code, passes on the new.",
+  "description": "A deterministic eval engine for coding agents. Proves a fix: fails on the old code, passes on new.",
   "repository": {
     "url": "https://github.com/fetchsandbox/mcp",
     "source": "github"
   },
-  "version": "0.5.1",
+  "version": "0.5.2",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "fetchsandbox-mcp",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "transport": {
         "type": "stdio"
       },

@@ -2,7 +2,8 @@
 
 <a href="https://www.producthunt.com/products/fetchsandbox?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-fetchsandbox-mcp" target="_blank" rel="noopener noreferrer"><img alt="FetchSandbox MCP - The MCP that proves your AI's integration fixes work | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1223147&theme=light"></a>
 
-MCP server for [FetchSandbox](https://fetchsandbox.com).
+A deterministic eval engine for coding agents, as an MCP server for
+[FetchSandbox](https://fetchsandbox.com).
 
 Your agent writes an integration. This checks whether it actually works — against
 a sandbox that behaves like the real provider, including the failures: retried

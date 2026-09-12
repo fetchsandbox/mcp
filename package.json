@@ -1,8 +1,8 @@
 {
   "name": "fetchsandbox-mcp",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "mcpName": "io.github.fetchsandbox/mcp",
-  "description": "The verification engine for AI agents. Runs your integration against every service it touches with failures injected on purpose, then proves a fix: the same scenario fails on the old code and passes on the new, with a receipt.",
+  "description": "A deterministic eval engine for coding agents. Fires the edge cases your sandbox never sends, then proves a fix: the same scenario fails on the old code and passes on the new.",
   "license": "MIT",
   "author": "FetchSandbox",
   "homepage": "https://fetchsandbox.com",
