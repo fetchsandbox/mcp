@@ -16,6 +16,10 @@ const REQUEST_TIMEOUT_MS = 30_000;
 
 // Retry only on transient failures: nginx 502/503/504 + network errors.
 // 4xx responses (bad spec, validation errors) should fail fast.
+// 429 is deliberately NOT here. Retrying a rate limit adds load to the thing
+// that is already refusing you, and our own client did exactly that while nginx
+// answered throttles with 503: a throttled user retried, which throttled them
+// harder. A 429 is returned to the agent to wait on, not retried for it.
 const RETRY_STATUSES = new Set([502, 503, 504]);
 const MAX_RETRIES = 1;
 const RETRY_BACKOFF_MS = 1500;

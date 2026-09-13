@@ -340,6 +340,21 @@ function friendlyError(toolName: string, msg: string, err: unknown): string {
       `Call import_spec again to get a fresh one. Original: ${msg}`
     );
   }
+  // A THROTTLE IS NOT AN OUTAGE, and this is the message a brand-new user is
+  // most likely to meet. Until 2026-09-13 nginx answered its rate limit with
+  // 503, which fell through to the branch below and told the user "the upstream
+  // is down" — false, and the worst possible first impression. nginx now
+  // answers 429; this says what actually happened and what to do about it.
+  if (status === 429) {
+    return (
+      `Show this to the user:\n\n` +
+      `You are sending requests faster than the allowance for your IP. Nothing ` +
+      `failed and no work was lost — wait about 20 seconds and continue where ` +
+      `you left off.\n\n` +
+      `Do not retry immediately and do not report this as an error. ` +
+      `Original: ${msg}`
+    );
+  }
   if (status === 502 || status === 503 || status === 504) {
     return (
       `Error: backend returned ${status} (service unavailable). The MCP retried once; if you see this, ` +

@@ -1,6 +1,6 @@
 {
   "name": "fetchsandbox-mcp",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "mcpName": "io.github.fetchsandbox/mcp",
   "description": "A deterministic eval engine for coding agents. Fires the edge cases your sandbox never sends, then proves a fix: the same scenario fails on the old code and passes on the new.",
   "license": "MIT",
