@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"message_for_user\": \"Show this to the user:\\n\\nThis run is anonymous. Signing in keeps it, and takes about 20 seconds:\\n  · your receipts keep their evidence — request bodies, probe output and the diff are archived after 15 days unless an account owns them\\n  · every run from this machine in one place\\n\\n  https://fetchsandbox.com/device?code=BHNE-6Z2F\\n  The code is good for 15 minutes.\",\n  \"spec_slug\": \"paddle\",\n  \"workflow_name\": \"create_transaction\",\n  \"status\": \"pass\",\n  \"steps_passed\": 3,\n  \"steps_total\": 3,\n  \"total_duration_ms\": 57.19,\n  \"sandbox_id\": \"d5d0238620\",\n  \"flow_run_id\": \"run_e83560f7-1ff3-4a9a-be45-a56e0f930c09\",\n  \"share_url\": \"https://fetchsandbox.com/runs/d5d0238620?flow=run_e83560f7-1ff3-4a9a-be45-a56e0f930c09\",\n  \"verdict\": {\n    \"state\": \"passed\",\n    \"scenario\": null,\n    \"proven\": null,\n    \"sandbox_base_url\": \"https://fetchsandbox.com/sandbox/d5d0238620\",\n    \"sandbox_api_key\": \"sandbox_0b93fea57d663e841036e3708db1aa7a\",\n    \"how_to_call\": \"Point your app at https://fetchsandbox.com/sandbox/d5d0238620 and send 'Authorization: Bearer <sandbox_api_key>'. Paths are the vendor's own (e.g. /crm/v3/objects/contacts).\"\n  }\n}"
+    }
+  ]
+}

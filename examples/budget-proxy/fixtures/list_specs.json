@@ -1,0 +1,8 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"total\": 1,\n  \"specs\": [\n    {\n      \"id\": \"fc84aec51c6f\",\n      \"name\": \"Paddle API\",\n      \"slug\": \"paddle\",\n      \"description\": \"Paddle Billing is a complete subscription and recurring revenue management platform, designed for modern SaaS businesses. It helps you increase your revenue, retain customers, and scale your operations.\\n\\nThe Paddle API lets you create, read, and update information in your Paddle Billing system. You can use it to integrate Paddle with your app or third-party solutions.\\n\\nSee https://developer.paddle.com/ to learn more.\",\n      \"endpoints_count\": 99,\n      \"tags\": [\n        \"Businesses\",\n        \"Metrics\",\n        \"Notification settings\",\n        \"Subscriptions\",\n        \"Simulation types\",\n        \"Checkout domains\",\n        \"Simulation run events\",\n        \"Events\",\n        \"Customers\",\n        \"Event types\",\n        \"Simulation runs\",\n        \"Notification logs\"\n      ]\n    }\n  ]\n}"
+    }
+  ]
+}

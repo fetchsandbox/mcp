@@ -18,7 +18,10 @@ trap 'rm -rf "$WORK"' EXIT
 
 # Everything the published package is built from. dist/ is not here on purpose:
 # the mirror is source, and npm builds from it.
-PATHS=(src test scripts package.json package-lock.json server.json
+# `examples/` is here because it was NOT, and the budget proxy sat in the
+# private repo for a day while being described to the person who asked for it.
+# Anything a user is told to look at must be on the mirror, or the link is a 404.
+PATHS=(src test scripts examples package.json package-lock.json server.json
        tsconfig.json README.md LICENSE glama.json)
 
 echo "syncing fetchsandbox-mcp $VERSION to the public mirror"
