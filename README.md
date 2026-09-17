@@ -4,7 +4,7 @@
 
 Also on [Smithery](https://smithery.ai/servers/fetchsandbox/mcp), [npm](https://www.npmjs.com/package/fetchsandbox-mcp) and the [official MCP registry](https://registry.modelcontextprotocol.io/v0/servers?search=fetchsandbox).
 
-A deterministic eval engine for coding agents, as an MCP server for
+A deterministic verification engine for agents, as an MCP server for
 [FetchSandbox](https://fetchsandbox.com).
 
 Your agent writes an integration. This checks whether it actually works — against
