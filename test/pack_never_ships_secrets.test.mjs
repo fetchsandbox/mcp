@@ -99,6 +99,22 @@ test("the packaged directory is bounded by the client's working directory", () =
       assert.throws(() => resolveWorkspaceDir(outside), /Refusing to package/, outside);
     }
 
+    // THE REFUSAL MUST SAY WHAT TO DO NEXT. Measured 2026-09-16/17 across
+    // three persona runs: the agent copies the project into its own scratchpad
+    // so it does not mutate the user's tree, then calls prove_fix on the copy.
+    // The refusal is correct; offering only "start the client there" and "set
+    // an env var" is not, because an agent can do neither mid-run. It read as a
+    // dead end and the run failed with a tool error.
+    try {
+      resolveWorkspaceDir(resolve(root, "elsewhere"));
+      assert.fail("expected a refusal");
+    } catch (e) {
+      assert.match(e.message, /you do not need to/i,
+        "the refusal must tell a copying agent it does not need to copy");
+      assert.ok(e.message.includes(resolveWorkspaceDir(proj)),
+        "the refusal must name the directory to pass INSTEAD");
+    }
+
     // A symlink inside the tree cannot be used to step out of it.
     symlinkSync(join(root, "elsewhere"), join(proj, "escape"));
     assert.throws(() => resolveWorkspaceDir("escape"), /Refusing to package/);

@@ -220,8 +220,24 @@ export function resolveWorkspaceDir(raw?: string): string {
   const dir = realOrSelf(abs);
   if (dir === root || dir.startsWith(root.endsWith(sep) ? root : root + sep)) return dir;
 
+  // SAY WHAT TO DO NEXT, not only what was refused.
+  //
+  // Measured 2026-09-16/17 across three persona runs (p1_support once,
+  // p4_senior twice): the agent copies the project into its own scratchpad so
+  // it does not mutate the user's tree, then calls prove_fix on the copy. That
+  // instinct is correct and the refusal is correct — but the old message
+  // offered only "start the client there" and "set an env var", neither of
+  // which an agent can do mid-run. So it read as a dead end and the run failed
+  // with a tool error.
+  //
+  // The recovery that works is the one the message never mentioned: pass the
+  // project root. prove_fix already materialises its own before/after copies,
+  // so copying first is not just unnecessary, it is the thing that breaks it.
   throw new ToolError(
     `Refusing to package ${dir} — it is outside ${root}.\n\n` +
+      `If you copied the project somewhere to avoid modifying it: you do not ` +
+      `need to. Pass ${root} instead — FetchSandbox makes its own before/after ` +
+      `copies and never writes to your tree.\n\n` +
       `FetchSandbox only reads the directory this MCP client was started in. ` +
       `If that path is really the code you want analysed, start the client there, ` +
       `or set FETCHSANDBOX_WORKSPACE_ROOT to a directory that contains both.`,
