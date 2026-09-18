@@ -61,7 +61,25 @@ export const proveFixTool = {
           "OPTIONAL. A twin from quickrun/run_workflow. Usually omit — the last " +
           "twin this session used is attached automatically.",
       },
-      path: { type: "string", description: "OPTIONAL. Project dir. Defaults to cwd." },
+      // PREVENT THE COPY, do not just refuse it.
+      //
+      // "Project dir. Defaults to cwd." told the agent nothing about mutation,
+      // while prove_fix is documented as needing "the unfixed tree" — which
+      // reads as "this may modify my files". So the rational plan is to copy
+      // the project somewhere safe and pass the copy, and pack.ts then refuses
+      // it for being outside the workspace. Measured four times across three
+      // personas (p1_support twice, p4_senior twice) on three different builds.
+      //
+      // pack.ts now tells a copying agent how to recover, but the error still
+      // counts against us — "a call that came back an ERROR is a finding even
+      // when a later retry worked. It is usually us." This is the us.
+      path: {
+        type: "string",
+        description:
+          "OPTIONAL. The project root, as it is. Defaults to cwd. Do NOT copy " +
+          "the project first: prove_fix builds its own before/after copies and " +
+          "never writes to your tree. A path outside the workspace is refused.",
+      },
       timeout_s: { type: "number", description: "OPTIONAL. Budget in seconds (default 300)." },
     },
     required: ["diff"],

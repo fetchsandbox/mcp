@@ -61,8 +61,9 @@ export const fixBugTool = {
       path: {
         type: "string",
         description:
-          "OPTIONAL. Absolute path to the project. Defaults to the current " +
-          "working directory.",
+          "OPTIONAL. Absolute path to the project, as it is. Defaults to the " +
+          "current working directory. Do NOT copy the project first: fix_bug " +
+          "returns a diff and never writes to your tree.",
       },
       spec: {
         type: "string",
