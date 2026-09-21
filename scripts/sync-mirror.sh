@@ -16,6 +16,34 @@ VERSION="$(node -p "require('$SRC/package.json').version")"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# server.json carries the version TWICE: once at the top level, and once at
+# packages[].version — and it is the NESTED one the registry uses to resolve
+# which npm package a client installs. Nothing kept them in step, so the nested
+# field sat at 0.5.3 while we shipped 0.5.4, 0.5.5 and 0.5.6. The registry
+# dutifully told every client to install 0.5.3, for three consecutive releases.
+# Nothing failed. The listing looked current, because the version people SEE is
+# the top-level one.
+#
+# (Found on 2026-09-18 by our own find_bugs, pointed at the public mirror.)
+#
+# The mirror repo's publish-registry.yml compares only the top-level field, so
+# it cannot catch this. Rather than add a second check that must be remembered,
+# package.json is made the single source: every version in server.json is
+# rewritten from it here, before anything is copied.
+node -e '
+  const fs = require("fs");
+  const f = process.argv[1], v = process.argv[2];
+  const d = JSON.parse(fs.readFileSync(f, "utf8"));
+  const was = [d.version, ...(d.packages || []).map(p => p.version)];
+  d.version = v;
+  for (const p of d.packages || []) p.version = v;
+  const now = [d.version, ...(d.packages || []).map(p => p.version)];
+  if (was.join() !== now.join()) {
+    fs.writeFileSync(f, JSON.stringify(d, null, 2) + "\n");
+    console.log(`  server.json versions realigned to ${v} (were ${was.join(", ")})`);
+  }
+' "$SRC/server.json" "$VERSION"
+
 # Everything the published package is built from. dist/ is not here on purpose:
 # the mirror is source, and npm builds from it.
 # `examples/` is here because it was NOT, and the budget proxy sat in the

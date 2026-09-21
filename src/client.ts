@@ -9,6 +9,7 @@
  */
 import { detectIde, getSessionId } from "./session.js";
 import { readCredentials } from "./auth.js";
+import { currentIdentity } from "./request_context.js";
 import { VERSION } from "./version.js";
 
 const DEFAULT_BASE_URL = "https://fetchsandbox.com";
@@ -46,12 +47,21 @@ export function buildHeaders(extra?: Record<string, string>): Record<string, str
   };
   const sid = getSessionId();
   if (sid) headers["x-mcp-session-id"] = sid;
-  headers["x-mcp-client"] = ide;
+  // A hosted request knows its platform from Origin; stdio knows its editor
+  // from env. Whichever is present is the truthful answer.
+  headers["x-mcp-client"] = currentIdentity()?.platform || ide;
   // The session id IS the install id (see auth.ts) and the backend already
   // reads that header everywhere, so a key is the only thing to add. Absent
   // credentials send nothing and the request behaves exactly as it did before.
-  const creds = readCredentials();
-  if (creds?.apiKey) headers["authorization"] = `Bearer ${creds.apiKey}`;
+  //
+  // ORDER MATTERS. A hosted request carries its OWN caller's key in the async
+  // context, and that must beat anything cached on disk or in the module —
+  // otherwise one tenant's key serves another tenant's request. stdio and CI
+  // never enter a request scope, so they fall through to exactly the source
+  // they used before. See request_context.ts for the leak this prevents.
+  const perRequest = currentIdentity()?.apiKey;
+  const apiKey = perRequest || readCredentials()?.apiKey;
+  if (apiKey) headers["authorization"] = `Bearer ${apiKey}`;
   return headers;
 }
 

@@ -29,6 +29,10 @@ import { importSpecTool, runImportSpec } from "./tools/import_spec.js";
 import { listSpecsTool, runListSpecs } from "./tools/list_specs.js";
 import { listWorkflowsTool, runListWorkflows } from "./tools/list_workflows.js";
 import { listRunsTool, runListRuns } from "./tools/list_runs.js";
+import {
+  listScenariosTool, runListScenarios,
+  setScenarioTool, runSetScenario,
+} from "./tools/scenarios.js";
 import { runRunWorkflow, runWorkflowTool } from "./tools/run_workflow.js";
 import {
   runRunAllWorkflows,
@@ -51,10 +55,29 @@ import { fixBugTool, runFixBug } from "./tools/fix_bug.js";
 import { proveFixTool, runProveFix } from "./tools/prove_fix.js";
 import { VERSION } from "./version.js";
 
-const server = new Server(
-  { name: "fetchsandbox", version: VERSION },
-  { capabilities: { tools: {} } },
-);
+/**
+ * ONE registry, TWO transports.
+ *
+ * `server` was a module-level singleton because stdio is the only transport
+ * that has ever existed here. A hosted endpoint needs its own instance per
+ * process (and, in stateless HTTP, potentially per request), so construction
+ * moves into a factory and both entry points call it.
+ *
+ * THE POINT OF THE FACTORY is not reuse, it is preventing DRIFT. A second,
+ * hand-written tool list for the HTTP surface would diverge within weeks and
+ * the divergence would be invisible: hosted users would silently get a
+ * different product from stdio users. `tests/transport-parity.test.mjs` pins
+ * that both transports expose byte-identical tool definitions.
+ */
+export function createServer(): Server {
+  return new Server(
+    { name: "fetchsandbox", version: VERSION },
+    { capabilities: { tools: {} } },
+  );
+}
+
+const server = createServer();
+registerHandlers(server);
 
 /**
  * Behaviour hints for each tool, per the MCP spec.
@@ -92,6 +115,7 @@ const ANNOTATIONS: Record<string, {
   list_specs:     { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
   list_workflows: { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
   list_runs:      { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
+  list_scenarios: { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
   find_bugs:      { readOnlyHint: true,  destructiveHint: false, idempotentHint: false, openWorldHint: true },
   // Proposes a diff. It does not apply it — applying is the agent's job.
   fix_bug:        { readOnlyHint: true,  destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -105,6 +129,11 @@ const ANNOTATIONS: Record<string, {
   verify_behavior:  { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   // Writes to a receipt page that anyone with the link can read.
   submit_proof:     { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  // Arming a failure changes what EVERY caller of that sandbox sees until it
+  // is put back, so it is a write. Not destructive — nothing is lost, and
+  // set_scenario('default') restores it — but an agent must not call it
+  // speculatively, which is exactly what readOnlyHint: true would invite.
+  set_scenario:     { readOnlyHint: false, destructiveHint: false, idempotentHint: true,  openWorldHint: true },
 };
 
 /** Attach the hint for a tool, leaving the tool definitions themselves alone. */
@@ -113,6 +142,7 @@ function annotated<T extends { name: string }>(tool: T): T {
   return a ? ({ ...tool, annotations: a } as T) : tool;
 }
 
+export function registerHandlers(server: Server) {
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     annotated(coachTool), // listed FIRST — the conversational entry point
@@ -129,6 +159,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     annotated(verifyBehaviorTool),
     annotated(submitProofTool), // attach the REAL app's before/after to the receipt
     annotated(listRunsTool),
+    // The moat, exposed: discover the failures, then inject one.
+    annotated(listScenariosTool),
+    annotated(setScenarioTool),
   ],
 }));
 
@@ -230,6 +263,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             limit: typeof a.limit === "number" ? a.limit : undefined,
           });
           break;
+        case listScenariosTool.name:
+          result = await runListScenarios({
+            sandbox_id: typeof a.sandbox_id === "string" ? a.sandbox_id : "",
+          });
+          break;
+        case setScenarioTool.name:
+          result = await runSetScenario({
+            sandbox_id: typeof a.sandbox_id === "string" ? a.sandbox_id : "",
+            scenario: typeof a.scenario === "string" ? a.scenario : "",
+          });
+          break;
         case runWorkflowTool.name:
           result = await runRunWorkflow({
             sandbox_id: typeof a.sandbox_id === "string" ? a.sandbox_id : "",
@@ -288,6 +332,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
     };
   }
 });
+}
 
 function friendlyError(toolName: string, msg: string, err: unknown): string {
   // Surface common backend errors as agent-readable hints instead of raw HTTP.

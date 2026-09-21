@@ -16,6 +16,7 @@
 import { buildHeaders, getBaseUrl, ToolError } from "./client.js";
 import { installId, readCredentials, writeCredentials, type Credentials } from "./auth.js";
 import { detectIde } from "./session.js";
+import { isHosted } from "./request_context.js";
 
 // Only ever used on a RETRY, when the human has already been shown the code and
 // is mid-sign-in. Long enough to cover a browser round trip, short enough that
@@ -140,6 +141,38 @@ let pending: DeviceCodeResponse | null = null;
  * degrades to exactly today's behaviour instead of a hard wall.
  */
 export async function withSignIn<T>(call: () => Promise<T>): Promise<T> {
+  // HOSTED: no device flow, ever. It ends in writeCredentials(), which on a
+  // shared container turns one user's browser sign-in into every user's
+  // credential. A hosted caller presents a key its platform already holds, so
+  // a 401 must surface as a 401 and say how to fix it — not start a flow that
+  // would poison the process for everyone else.
+  if (isHosted()) {
+    try {
+      return await call();
+    } catch (e) {
+      if (e instanceof ToolError && e.status === 401) {
+        // Point at /keys, NOT /device. The device page asks for a code that a
+        // CLI printed and never displays a key — a hosted caller has neither,
+        // so sending them there was a dead end dressed as an instruction.
+        // /keys signs in with Google or GitHub and hands over a pasteable key.
+        //
+        // Written for the AGENT to relay, because on a hosted connector the
+        // agent is the only thing that reads this. Hence the plain sentence a
+        // non-developer can act on rather than a header-shaped instruction.
+        throw new ToolError(
+          "FetchSandbox needs a free API key for this step. Ask the user to " +
+          "open https://fetchsandbox.com/keys, sign in with Google or GitHub, " +
+          "click 'Create a key', and paste the key that appears into this " +
+          "connector's authentication field (as a bearer token). Everything " +
+          "already run so far — the sandbox and any failure scenario — keeps " +
+          "working; only this step needs the key.",
+          401,
+        );
+      }
+      throw e;
+    }
+  }
+
   // Cheap, non-blocking: an approval that landed between calls is picked up here.
   if (pending && !readCredentials()?.apiKey) {
     const creds = await redeemOnce(pending).catch(() => null);

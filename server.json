@@ -17,19 +17,19 @@
     "url": "https://github.com/fetchsandbox/mcp",
     "source": "github"
   },
-  "version": "0.5.6",
+  "version": "0.5.7",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "fetchsandbox-mcp",
-      "version": "0.5.3",
+      "version": "0.5.7",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
           "name": "FETCHSANDBOX_API_KEY",
-          "description": "Optional. Sign in without a browser \u2014 useful in CI. Left unset, the server runs anonymously and asks you to sign in the first time a run produces a receipt.",
+          "description": "Optional. Sign in without a browser — useful in CI. Left unset, the server runs anonymously and asks you to sign in the first time a run produces a receipt.",
           "isRequired": false,
           "format": "string",
           "isSecret": true
@@ -49,6 +49,12 @@
           "name": "FETCHSANDBOX_BASE_URL"
         }
       ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://fetchsandbox.com/mcp/v1"
     }
   ]
 }
