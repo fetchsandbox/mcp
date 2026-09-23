@@ -211,6 +211,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             diff: typeof a.diff === "string" ? a.diff : "",
             bug: typeof a.bug === "string" ? a.bug : undefined,
             scenario: typeof a.scenario === "string" ? a.scenario : undefined,
+            // The twin the agent already exercised. Dropped here until
+            // 2026-09-23, so an explicit sandbox_id lost silently to the
+            // handler's lastTwin() fallback — proving against whichever
+            // sandbox happened to be touched last.
+            sandbox_id:
+              typeof a.sandbox_id === "string" ? a.sandbox_id : undefined,
             path: typeof a.path === "string" ? a.path : undefined,
             timeout_s:
               typeof a.timeout_s === "number" ? a.timeout_s : undefined,
@@ -255,6 +261,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         case listWorkflowsTool.name:
           result = await runListWorkflows({
             spec_id: typeof a.spec_id === "string" ? a.spec_id : "",
+            spec_slug: typeof a.spec_slug === "string" ? a.spec_slug : "",
           });
           break;
         case listRunsTool.name:

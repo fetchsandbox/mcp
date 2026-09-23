@@ -25,15 +25,20 @@ nothing to install.
   "mcpServers": {
     "fetchsandbox": {
       "command": "npx",
-      "args": ["-y", "fetchsandbox-mcp@latest"]
+      "args": ["-y", "fetchsandbox-mcp@latest"],
+      "env": { "FETCHSANDBOX_API_KEY": "fsk_your_key_here" }
     }
   }
 }
 ```
 
+The key is optional — leave `env` out and everything still runs. Get one at
+**https://fetchsandbox.com/keys** when you want receipts that outlive 15 days.
+See [Accounts](#accounts).
+
 | Client | File |
 |---|---|
-| Claude Code | `~/.claude/settings.json`, or `.mcp.json` in the repo |
+| Claude Code | `.mcp.json` in your project root, or `claude mcp add` |
 | Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Cursor | `~/.cursor/mcp.json`, or `.cursor/mcp.json` in the repo |
 | Zed | `~/.config/zed/settings.json`, under `context_servers` |
@@ -41,6 +46,25 @@ nothing to install.
 
 Restart the client afterwards. Anything else that speaks MCP takes the same
 command and args.
+
+### No terminal? Use the hosted endpoint
+
+Browser-based builders — Lovable, Bolt, v0 — can't run `npx`. They connect
+straight to the hosted streamable-HTTP transport instead:
+
+```
+https://fetchsandbox.com/mcp/v1
+```
+
+Authenticate with a **Bearer token**, not "None" — paste the key from
+https://fetchsandbox.com/keys.
+
+Same twins, same scenarios. Three tools are refused there and only three:
+`find_bugs`, `fix_bug` and `prove_fix` read your project from disk, and a
+hosted server has no copy of it. Everything else — `quickrun`, `run_workflow`,
+`list_workflows`, `list_scenarios`, `set_scenario`, `verify_behavior` — needs
+no filesystem and works exactly as it does over stdio. To analyse your own
+code, run `npx fetchsandbox-mcp` locally in the project you want looked at.
 
 ## Using it
 
@@ -68,14 +92,26 @@ seconds and does two things: the evidence behind your receipts stops being
 archived after 15 days, and the runs from that machine collect in one place.
 You'll be asked at most once a day, and never once you're signed in.
 
-For CI, or anywhere a browser isn't available, set a key instead:
+For CI, the hosted endpoint, or anywhere a browser isn't available, set a key
+instead. Create one at **https://fetchsandbox.com/keys** — sign in, then
+"Create a key". It looks like `fsk_...`.
+
+In an MCP client config, it goes in `env`:
+
+```json
+"env": { "FETCHSANDBOX_API_KEY": "fsk_your_key_here" }
+```
+
+In a shell or CI:
 
 ```
-FETCHSANDBOX_API_KEY=fsk_...
+export FETCHSANDBOX_API_KEY=fsk_your_key_here
 ```
 
-The key is written to `~/.fetchsandbox/credentials.json` when you sign in from
-an editor; the environment variable always wins.
+On the hosted endpoint, send it as `Authorization: Bearer fsk_...`.
+
+The key is also written to `~/.fetchsandbox/credentials.json` when you sign in
+from an editor; the environment variable always wins.
 
 ## Tools
 
@@ -92,13 +128,18 @@ Start with `guide`. It picks the right ones for what you asked.
 
 **Running the sandbox**
 
+This is the group that needs no filesystem, so it is also the whole of what a
+browser-based builder can use over the hosted endpoint.
+
 | Tool | What it does | Arguments |
 |---|---|---|
 | `quickrun` | Runs a workflow against a bundled spec in one call. Returns `sandbox_id` and `flow_run_id` | `spec_slug*`, `workflow_name*`, `scenario` |
 | `verify_behavior` | Shows a failure class on reference handlers — buggy vs fixed | `bug_pattern_id*`, `prompt`, `sandbox_id`, `flow_run_id` |
 | `run_workflow` | Runs one workflow on a sandbox you already have | `sandbox_id*`, `workflow_name*`, `scenario` |
 | `run_all_workflows` | Runs several in one call | `sandbox_id*`, `workflow_names` |
-| `list_workflows` | Workflows available for a spec | `spec_id*` |
+| `list_workflows` | Workflows AND failure scenarios for a spec, in one answer | `spec_slug` or `spec_id` |
+| `list_scenarios` | The failures a spec can inject, with what each one does | `spec_slug` or `spec_id` |
+| `set_scenario` | Arms a failure on a sandbox, so the next call misbehaves | `sandbox_id*`, `scenario*` |
 | `list_runs` | Past runs for a sandbox | `sandbox_id*`, `limit` |
 
 **Bringing your own spec**

@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 
 import { ToolError } from "../client.js";
+import { isHosted } from "../request_context.js";
 
 // Mirrors the backend's _TAR_EXCLUDE plus common build/output dirs.
 const EXCLUDES = [
@@ -210,6 +211,35 @@ function walk(dir: string, prefix = ""): string[] {
  * MCP config, and a file in a repo cannot.
  */
 export function resolveWorkspaceDir(raw?: string): string {
+  // HOSTED HAS NO WORKSPACE. Refuse rather than pack the server.
+  //
+  // Found 2026-09-21 while asking what a Lovable user still cannot do. These
+  // tools pack a directory and default to process.cwd(). On stdio that is the
+  // developer's project, which is the whole point. On the hosted transport
+  // that process is OUR CONTAINER, so a remote caller would tar /app —
+  // FetchSandbox's own source — upload it, and receive findings about us.
+  //
+  // Two things wrong with letting that happen, and the second is worse:
+  //   1. The caller can never analyse their own code, because their code is
+  //      on Lovable's infrastructure and was never on this filesystem.
+  //   2. It SUCCEEDS. It burns a Max seat analysing our container and returns
+  //      a plausible answer about the wrong codebase. A tool that is
+  //      unavailable is a known gap; a tool that quietly answers about
+  //      something else is a false result.
+  //
+  // So this fails closed, in the one place every packing tool already passes
+  // through, and says what the caller can do instead.
+  if (isHosted()) {
+    throw new ToolError(
+      "This tool reads your project from disk, and a hosted connector has no " +
+      "access to your files — your code lives in your editor or on your app " +
+      "platform, not on this server. Use quickrun, list_scenarios and " +
+      "set_scenario to exercise your integration against a twin and inject " +
+      "failures; those need no filesystem. For find_bugs, fix_bug and " +
+      "prove_fix, run FetchSandbox locally: npx fetchsandbox-mcp in the " +
+      "project you want analysed.",
+    );
+  }
   const root = realOrSelf(process.env.FETCHSANDBOX_WORKSPACE_ROOT?.trim() || process.cwd());
   const asked = raw && raw.trim() ? raw.trim() : null;
   if (!asked) return root;
