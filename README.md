@@ -59,12 +59,18 @@ https://fetchsandbox.com/mcp/v1
 Authenticate with a **Bearer token**, not "None" — paste the key from
 https://fetchsandbox.com/keys.
 
-Same twins, same scenarios. Three tools are refused there and only three:
-`find_bugs`, `fix_bug` and `prove_fix` read your project from disk, and a
-hosted server has no copy of it. Everything else — `quickrun`, `run_workflow`,
-`list_workflows`, `list_scenarios`, `set_scenario`, `verify_behavior` — needs
-no filesystem and works exactly as it does over stdio. To analyse your own
+Same twins, same scenarios, seven tools: `validate_integration`, `quickrun`,
+`run_workflow`, `verify_behavior`, `list_workflows`, `guide`, `coach`.
+
+The rest are not hidden — they cannot work there. `find_bugs`, `fix_bug` and
+`prove_fix` read your project from disk and a hosted server has no copy of it,
+so advertising them only produced sessions that dead-ended. To analyse your own
 code, run `npx fetchsandbox-mcp` locally in the project you want looked at.
+
+Start with `validate_integration`. A green `quickrun` proves the provider
+behaves as documented; it does not touch your checkout endpoint, your webhook
+handler, or your email send. `validate_integration` hands you a fresh twin per
+provider and then reports what **your** code actually called.
 
 ## Using it
 
@@ -126,30 +132,34 @@ Start with `guide`. It picks the right ones for what you asked.
 | `fix_bug` | Returns a `git diff` for one finding. Doesn't touch your files | `bug*`, `fix_pattern`, `path`, `spec`, `timeout_s` |
 | `prove_fix` | Runs the failure against your code before and after the diff. Green only on a measured flip | `diff*`, `bug`, `scenario`, `sandbox_id`, `path`, `timeout_s` |
 
-**Running the sandbox**
-
-This is the group that needs no filesystem, so it is also the whole of what a
-browser-based builder can use over the hosted endpoint.
+**Verifying an integration**
 
 | Tool | What it does | Arguments |
 |---|---|---|
-| `quickrun` | Runs a workflow against a bundled spec in one call. Returns `sandbox_id` and `flow_run_id` | `spec_slug*`, `workflow_name*`, `scenario` |
-| `verify_behavior` | Shows a failure class on reference handlers — buggy vs fixed | `bug_pattern_id*`, `prompt`, `sandbox_id`, `flow_run_id` |
-| `run_workflow` | Runs one workflow on a sandbox you already have | `sandbox_id*`, `workflow_name*`, `scenario` |
-| `run_all_workflows` | Runs several in one call | `sandbox_id*`, `workflow_names` |
-| `list_workflows` | Workflows AND failure scenarios for a spec, in one answer | `spec_slug` or `spec_id` |
-| `list_scenarios` | The failures a spec can inject, with what each one does | `spec_slug` or `spec_id` |
-| `set_scenario` | Arms a failure on a sandbox, so the next call misbehaves | `sandbox_id*`, `scenario*` |
-| `list_runs` | Past runs for a sandbox | `sandbox_id*`, `limit` |
-
-**Bringing your own spec**
-
-| Tool | What it does | Arguments |
-|---|---|---|
-| `list_specs` | Specs already available | `filter` |
-| `import_spec` | Ingests an OpenAPI 3.x spec by URL or pasted content. Returns a callable sandbox | `url`, `content`, `name` |
-| `submit_proof` | Publishes a receipt for a run | `sandbox_id`, `flow_run_id`, `bug_pattern_id`, `summary`, `proofs` |
+| `validate_integration` | Proves **your own code** against a provider, not that our twin works. Hands back a fresh twin per provider, then reads our request log to report what your app actually called | `providers`, `app_base_url`, `session_id` |
+| `quickrun` | Runs one of OUR curated workflows against a bundled spec. Green here says the provider behaves as documented — it says nothing about your integration | `spec_slug*`, `workflow_name*`, `scenario` |
+| `run_workflow` | The same, on a sandbox you already have — this is where you re-run with a `scenario` armed | `sandbox_id*`, `workflow_name*`, `scenario` |
+| `verify_behavior` | Shows a failure class on **reference** handlers — buggy vs fixed. Not your code | `bug_pattern_id*`, `prompt`, `sandbox_id`, `flow_run_id` |
+| `list_workflows` | Workflows AND the failure scenarios a spec can inject, in one answer | `spec_slug` or `spec_id` |
+| `guide` | Routes a symptom to the provider behaviour that explains it, and returns the next call with its arguments filled in | `intent*`, `hints` |
 | `coach` | Multi-turn help building an integration | `intent`, `session_id`, `user_response`, `context` |
+
+Those seven are the whole of what a browser-based builder sees, and they are the
+only ones that need no filesystem. Everything below requires a local project.
+
+**On a machine with your code**
+
+| Tool | What it does | Arguments |
+|---|---|---|
+| `find_bugs` | Audits your project against known integration failure classes | `path`, `spec`, `timeout_s` |
+| `fix_bug` | Returns a `git diff` for one finding. Doesn't touch your files | `bug*`, `fix_pattern`, `path`, `spec`, `timeout_s` |
+| `prove_fix` | Runs the failure against your code before and after the diff. Green only on a measured flip | `diff*`, `bug`, `scenario`, `sandbox_id`, `path`, `timeout_s` |
+| `run_all_workflows` | Runs several workflows in one call | `sandbox_id*`, `workflow_names` |
+| `list_scenarios` | The failures a spec can inject | `sandbox_id*` |
+| `set_scenario` | Arms a failure on a sandbox | `sandbox_id*`, `scenario*` |
+| `list_runs` | Past runs for a sandbox | `sandbox_id*`, `limit` |
+| `list_specs` | Specs already available | `filter` |
+| `submit_proof` | Publishes a receipt for a run | `sandbox_id`, `flow_run_id`, `bug_pattern_id`, `summary`, `proofs` |
 
 `*` = required.
 
