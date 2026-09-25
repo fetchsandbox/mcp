@@ -337,3 +337,67 @@ test("hosted requests are attributed to the calling PLATFORM", async (t) => {
   assert.ok(seen.includes("lovable"), `lovable not attributed: ${JSON.stringify(seen)}`);
   assert.ok(seen.includes("bolt"), `bolt not attributed: ${JSON.stringify(seen)}`);
 });
+
+// ── the hosted subset ────────────────────────────────────────────────────────
+//
+// The invariant above was "both transports expose byte-identical tools",
+// written because "a second file with its own tool list diverges within weeks,
+// and the divergence is INVISIBLE."
+//
+// That reasoning still holds and is why the hosted list is a FILTER over one
+// registry rather than a second array. What changed on 2026-09-24 is that the
+// divergence is now DECLARED: hosted callers were being offered 17 tools of
+// which four cannot work there (find_bugs, fix_bug and prove_fix read a
+// filesystem the caller does not have; import_spec now redirects), plus three
+// ways to run a workflow and four ways to list something.
+//
+// So parity is re-expressed, not deleted:
+//   * every hosted name exists in the full registry — no phantom
+//   * shared definitions are byte-identical — no drift in content
+//   * stdio still gets everything — Claude Code and Cursor cannot regress
+import { ALL_TOOLS, HOSTED_TOOL_NAMES } from "../dist/index.js";
+
+test("every hosted tool exists in the one registry", () => {
+  const all = new Set(ALL_TOOLS.map((t) => t.name));
+  const phantom = [...HOSTED_TOOL_NAMES].filter((n) => !all.has(n));
+  assert.deepEqual(phantom, [], `advertised to hosted but not implemented: ${phantom}`);
+});
+
+test("a hosted tool's definition is byte-identical to the stdio one", () => {
+  // The original invariant, intact. A subset is safe; a subset that quietly
+  // rewrites a description or a schema is the drift the file was written about.
+  for (const t of ALL_TOOLS.filter((x) => HOSTED_TOOL_NAMES.has(x.name))) {
+    const stdio = ALL_TOOLS.find((x) => x.name === t.name);
+    assert.equal(JSON.stringify(t), JSON.stringify(stdio), `${t.name} diverged`);
+  }
+});
+
+test("stdio keeps every tool", () => {
+  // The population that has a filesystem, composes tools correctly, and has a
+  // human in the loop. Nothing in the hosted change may reach them.
+  const names = ALL_TOOLS.map((t) => t.name);
+  for (const n of ["find_bugs", "fix_bug", "prove_fix", "list_specs",
+                   "list_runs", "list_scenarios", "set_scenario",
+                   "run_all_workflows"]) {
+    assert.ok(names.includes(n), `${n} vanished from stdio`);
+  }
+});
+
+test("nothing that cannot work is advertised to hosted", () => {
+  // find_bugs/fix_bug/prove_fix throw on the hosted transport by design
+  // (pack.ts refuses: "a hosted connector has no access to your files").
+  // Advertising a tool that always throws is worse than omitting it — and
+  // find_bugs opens "FIRST STEP for any API-integration bug", so it was the
+  // loudest routing claim in the list while being unusable.
+  for (const n of ["find_bugs", "fix_bug", "prove_fix", "import_spec"]) {
+    assert.ok(!HOSTED_TOOL_NAMES.has(n), `${n} cannot work on hosted`);
+  }
+});
+
+test("the hosted set stays inside the measured selection window", () => {
+  // Tool-selection accuracy peaks at 5-8 and degrades past 10-15, and
+  // closely-related tools are the worst case. This is a ratchet: adding an
+  // eighth hosted tool should be a deliberate act, not a drive-by.
+  assert.ok(HOSTED_TOOL_NAMES.size <= 8,
+    `hosted advertises ${HOSTED_TOOL_NAMES.size} tools; past 8 selection degrades`);
+});

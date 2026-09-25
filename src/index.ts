@@ -25,9 +25,11 @@ import {
 import { ToolError, getBaseUrl } from "./client.js";
 import { withSignIn } from "./signin.js";
 import { detectIde } from "./session.js";
+import { isHosted } from "./request_context.js";
 import { importSpecTool, runImportSpec } from "./tools/import_spec.js";
 import { listSpecsTool, runListSpecs } from "./tools/list_specs.js";
 import { listWorkflowsTool, runListWorkflows } from "./tools/list_workflows.js";
+import { validateIntegrationTool, runValidateIntegration } from "./tools/validate_integration.js";
 import { listRunsTool, runListRuns } from "./tools/list_runs.js";
 import {
   listScenariosTool, runListScenarios,
@@ -114,6 +116,8 @@ const ANNOTATIONS: Record<string, {
   guide:          { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
   list_specs:     { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
   list_workflows: { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
+  // Mints sandboxes and reads state back — a write, like quickrun.
+  validate_integration: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   list_runs:      { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
   list_scenarios: { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
   find_bugs:      { readOnlyHint: true,  destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -142,27 +146,92 @@ function annotated<T extends { name: string }>(tool: T): T {
   return a ? ({ ...tool, annotations: a } as T) : tool;
 }
 
+/** Every tool this server implements. ONE registry — the hosted list is
+ *  derived from it, never written separately.
+ *
+ *  transport_parity.test.mjs exists because "a second file with its own tool
+ *  list diverges within weeks, and the divergence is INVISIBLE: hosted users
+ *  silently get a different product, and nothing goes red." That reasoning is
+ *  still right, and it is why this is a filter over one array rather than two
+ *  arrays. What the parity test now pins is that the hosted set is a SUBSET
+ *  whose shared definitions are byte-identical — a visible, tested divergence
+ *  instead of an accidental one.
+ */
+export const ALL_TOOLS = [
+  annotated(coachTool), // listed FIRST — the conversational entry point
+  annotated(findBugsTool), // investigate: find production bugs in the user's own code
+  annotated(fixBugTool), // fix: grounded remediation → git diff proposal
+  annotated(proveFixTool), // prove: run FS's scenario buggy vs fixed → honest-green gate
+  annotated(guideTool), // the deterministic single-shot router (still useful)
+  annotated(quickrunTool), // run a bundled spec by slug — no import_spec/sandbox needed
+  annotated(listSpecsTool),
+  // import_spec is NOT advertised. (Raj, 2026-09-24.) Self-serve spec import
+  // is closed: the catalogue is curated, and a URL alone does not produce a
+  // twin. It stayed in the list long enough to break the most realistic first
+  // message we have — an agent told "paddle" already existed tried to import
+  // paddle anyway, hit the ONE authenticated tool in the set, and ended the
+  // session asking the user to go make an account before anything had run.
+  //
+  // The handler below is deliberately left wired. Clients pinned to an older
+  // version still have the tool, and the backend now answers them with a
+  // redirect ("already available, call quickrun with spec_slug=…") instead of
+  // an auth challenge. Removing the case would turn that into "unknown tool".
+  annotated(validateIntegrationTool),
+  annotated(listWorkflowsTool),
+  annotated(runAllWorkflowsTool),
+  annotated(runWorkflowTool),
+  annotated(verifyBehaviorTool),
+  annotated(submitProofTool), // attach the REAL app's before/after to the receipt
+  annotated(listRunsTool),
+  // The moat, exposed: discover the failures, then inject one.
+  annotated(listScenariosTool),
+  annotated(setScenarioTool),
+];
+
+/** What a browser-based app builder is shown. MEASURED, not guessed.
+ *
+ *  Hosted callers were being offered 17 tools of which FOUR CANNOT WORK:
+ *  find_bugs, fix_bug and prove_fix read the filesystem and throw, and
+ *  import_spec now redirects. Worse, find_bugs opens "FIRST STEP for any
+ *  API-integration bug — reach for this the moment a user reports a symptom",
+ *  so the loudest routing claim in the whole list belonged to a tool a Lovable
+ *  agent can never call.
+ *
+ *  The rest were near-duplicates competing for the same slot: three ways to run
+ *  a workflow, four ways to list something. Selection accuracy is measured to
+ *  peak at 5–8 tools and degrade past 10–15, and closely-related tools are the
+ *  worst case — which is exactly the shape we had.
+ *
+ *  Nothing here was removed on taste. Across every hosted session ever served,
+ *  exactly seven tools have been called: quickrun, coach, run_workflow, guide,
+ *  list_workflows, verify_behavior, submit_proof. Everything dropped below has
+ *  zero hosted calls, all time.
+ *
+ *  set_scenario and list_scenarios are dropped despite being "the moat": both
+ *  require a sandbox_id, list_workflows now returns the scenarios anyway, and
+ *  NEITHER HAS EVER BEEN CALLED BY ANY CLIENT, ONCE, in 5,200+ calls. Arming is
+ *  reachable through quickrun/run_workflow's `scenario` argument, which is how
+ *  the 1.72% of runs that do inject a failure got there.
+ *
+ *  STDIO IS UNTOUCHED. Claude Code and Cursor keep all of ALL_TOOLS, byte for
+ *  byte: they have a filesystem, they compose tools correctly, and they have a
+ *  human in the loop.
+ */
+export const HOSTED_TOOL_NAMES = new Set([
+  "coach",                 // the conversational entry point
+  "guide",                 // route a symptom to provider behaviour
+  "validate_integration",  // prove the USER'S app, not our twin
+  "quickrun",              // the only runner usable without a sandbox_id
+  "run_workflow",          // re-run with a scenario armed
+  "verify_behavior",       // buggy vs fixed reference diff
+  "list_workflows",        // workflows AND scenarios in one answer
+]);
+
 export function registerHandlers(server: Server) {
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    annotated(coachTool), // listed FIRST — the conversational entry point
-    annotated(findBugsTool), // investigate: find production bugs in the user's own code
-    annotated(fixBugTool), // fix: grounded remediation → git diff proposal
-    annotated(proveFixTool), // prove: run FS's scenario buggy vs fixed → honest-green gate
-    annotated(guideTool), // the deterministic single-shot router (still useful)
-    annotated(quickrunTool), // run a bundled spec by slug — no import_spec/sandbox needed
-    annotated(listSpecsTool),
-    annotated(importSpecTool),
-    annotated(listWorkflowsTool),
-    annotated(runAllWorkflowsTool),
-    annotated(runWorkflowTool),
-    annotated(verifyBehaviorTool),
-    annotated(submitProofTool), // attach the REAL app's before/after to the receipt
-    annotated(listRunsTool),
-    // The moat, exposed: discover the failures, then inject one.
-    annotated(listScenariosTool),
-    annotated(setScenarioTool),
-  ],
+  tools: isHosted()
+    ? ALL_TOOLS.filter((t) => HOSTED_TOOL_NAMES.has(t.name))
+    : ALL_TOOLS,
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
@@ -256,6 +325,17 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             url: typeof a.url === "string" ? a.url : undefined,
             content: typeof a.content === "string" ? a.content : undefined,
             name: typeof a.name === "string" ? a.name : undefined,
+          });
+          break;
+        case validateIntegrationTool.name:
+          result = await runValidateIntegration({
+            providers: Array.isArray(a.providers)
+              ? (a.providers as unknown[]).filter((x): x is string => typeof x === "string")
+              : undefined,
+            app_base_url:
+              typeof a.app_base_url === "string" ? a.app_base_url : undefined,
+            session_id:
+              typeof a.session_id === "string" ? a.session_id : undefined,
           });
           break;
         case listWorkflowsTool.name:
