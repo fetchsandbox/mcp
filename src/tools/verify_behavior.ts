@@ -15,8 +15,8 @@ import { pollJob } from "./jobs.js";
  *
  * Calls POST /api/mcp/verify_behavior. The buggy/fixed handlers are
  * FetchSandbox reference implementations, NOT the user's code — the diff proves
- * the pattern is real and the brain's fix_pattern works; the user applies that
- * fix_pattern to inherit the behavior.
+ * the pattern is real for those reference handlers. It does not verify the
+ * user's implementation, even after applying the suggested fix.
  */
 
 export interface VerifyBehaviorInput {
@@ -40,6 +40,13 @@ interface BackendVerifyResponse {
   next_actions?: unknown;
   prove_instructions?: string;
   pattern_id?: string;
+  provider?: string | null;
+  evidence_scope?: string;
+  app_verified?: boolean;
+  /** False vetoes partial evidence: the backend knows every configured probe. */
+  confirmed?: boolean;
+  receipt_attached?: boolean;
+  status?: string;
   mode?: string;
   disclaimer?: string;
   probes?: BackendProbe[];
@@ -59,6 +66,7 @@ interface BackendVerifyResponse {
   duration_ms?: number;
   error?: string | null;
   classification?: unknown;
+  simulations?: BackendVerifyResponse[];
 }
 
 export interface NormalizedVerifyResult {
@@ -67,8 +75,15 @@ export interface NormalizedVerifyResult {
   next_actions?: unknown;
   prove_instructions?: string;
   pattern_id?: string;
+  provider?: string | null;
+  evidence_scope: "reference_handlers";
+  app_verified: false;
+  error?: string;
+  classification?: unknown;
+  simulations?: NormalizedVerifyResult[];
   mode?: string;
   confirmed: boolean;
+  receipt_attached?: boolean;
   /** Which property the fuzzer flipped, when the simulation was an order_fuzz.
    *  A receipt must never claim a property this run did not prove. */
   confirmed_by?: string[];
@@ -102,7 +117,9 @@ export const verifyBehaviorTool = {
     "flow_run_id from the run so the diff is saved onto that run's receipt " +
     "URL. bug_pattern_id comes from guide's matched_bug_pattern. The buggy/" +
     "fixed handlers are FetchSandbox reference implementations, NOT the user's " +
-    "code — apply the brain's fix_pattern to inherit the proven behavior.",
+    "code. A confirmed reference result does not verify the user's app or show " +
+    "that it is ready to ship. Keep the returned provider and evidence scope " +
+    "with any reported result.",
   inputSchema: {
     type: "object",
     properties: {
@@ -123,7 +140,8 @@ export const verifyBehaviorTool = {
         type: "string",
         description:
           "OPTIONAL. The sandbox from the run. Pass with flow_run_id to save " +
-          "the diff onto that run's receipt.",
+          "the diff onto that run's receipt. This binds the pattern to that " +
+          "sandbox's provider; provide it when verifying a provider integration.",
       },
       flow_run_id: {
         type: "string",
@@ -183,6 +201,10 @@ export async function runVerifyBehavior(
         })
       : start
   ) as unknown as BackendVerifyResponse;
+  return normalizeVerifyResult(raw);
+}
+
+function normalizeVerifyResult(raw: BackendVerifyResponse): NormalizedVerifyResult {
   const probes = (raw.probes ?? []).map((p) => {
     const buggy_status = p.buggy_response?.status;
     const fixed_status = p.fixed_response?.status;
@@ -198,8 +220,39 @@ export async function runVerifyBehavior(
       verdict: p.verdict,
     };
   });
+  const simulations = raw.simulations?.map(normalizeVerifyResult);
+  const providerMismatch = simulations?.some(
+    (card) => raw.provider && card.provider && raw.provider !== card.provider,
+  );
+  const error = raw.error || (raw.status === "error"
+    ? "Reference simulation job failed."
+    : providerMismatch
+      ? "Reference simulation provider does not match its parent result."
+      : undefined);
+  const probeError = (raw.probes ?? []).some(
+    (p) => p.buggy_response?.error || p.fixed_response?.error,
+  );
+  // Every selected card must complete. An error, empty card, or provider
+  // mismatch cannot be turned into confirmation by positive partial evidence.
+  // A server refusal also vetoes the result: only it can know which configured
+  // probes are missing. Older backends omit this field and retain these checks.
+  const confirmed = raw.confirmed !== false && !error && !probeError && (simulations
+    ? simulations.length > 0 && simulations.every((card) => card.confirmed)
+    : raw.order_fuzz
+      ? raw.order_fuzz.confirmed === true
+      : probes.length > 0 &&
+        probes.every((p) => p.matched_expectation) &&
+        probes.some((p) => p.divergent));
   return {
     pattern_id: raw.pattern_id,
+    provider: raw.provider,
+    // This tool always executes reference handlers, including on old backends
+    // that did not annotate the result. It cannot attest to the user's app.
+    evidence_scope: "reference_handlers",
+    app_verified: false,
+    error,
+    classification: raw.classification,
+    simulations,
     // Forward the server's typed next step. These clients whitelist fields, so
     // a server-side addition is invisible here unless it is named — which is
     // how find_bugs shipped for a month as "the first step of an
@@ -230,11 +283,8 @@ export async function runVerifyBehavior(
     // probes (buggy == fixed everywhere) matches expectations but proves
     // nothing, so it must NOT count as a confirmation. That rule is about
     // PROBES, so it applies only where probes exist.
-    confirmed: raw.order_fuzz
-      ? raw.order_fuzz.confirmed === true
-      : probes.length > 0 &&
-        probes.every((p) => p.matched_expectation) &&
-        probes.some((p) => p.divergent),
+    confirmed,
+    receipt_attached: raw.receipt_attached,
     // Which property the fuzzer actually flipped — order independence,
     // terminal safety, idempotency. Never let a receipt claim a property this
     // run did not prove.

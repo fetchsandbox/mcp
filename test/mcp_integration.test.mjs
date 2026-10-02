@@ -23,6 +23,30 @@ const httpCalls = [];
 const realFetch = globalThis.fetch;
 
 function cannedBackendResponse(path) {
+  if (path.endsWith("/api/mcp/validate_integration")) {
+    const body = httpCalls.at(-1)?.body;
+    if (body?.execute) return {job_id: "receipt_job", status: "running"};
+    if (body?.providers?.length) return {step: "handover", next_action: "inspect_app_then_configure_receipt_suite",
+      next_tool_call: null, missing_configuration: ["webhook_url"], legs: {paddle: {base_url: "https://twin.test"}},
+      application_setup_policy: {replit_private_development_url: {steps: ["restore privacy"]}}};
+    if (body?.suite) return {step: "configure_app", next_action: "configure_app_then_execute",
+      setup_actions_before_execute: ["preflight", "bind twins", "save secrets"], next_tool_call: null};
+    return {};
+  }
+  if (path.endsWith("/api/mcp/jobs/receipt_job")) {
+    return {status: "done", suite: "receipt_delivery_v1",
+      verdict: "inconclusive", app_verified: false,
+      checks: ["R1", "R2", "R3", "R4"].map(id => ({id, status: "unmeasured"})),
+      message_for_user: "The configured webhook URL returned HTTP 404. Check that its host and path match the app's actual webhook route.",
+      receipt_url: "/runs/sb_receipt?flow=vr_receipt",
+      execution_diagnostics: {delivery_attempts: 1, successful_deliveries: 0,
+        failed_deliveries: [{case: "same_customer", stage: "first",
+          code: "webhook_route_not_found", http_status: 404}],
+        checkpoints_recorded: 0, checkpoints_expected: 6,
+        missing_checkpoints: ["same_customer.first"], error_codes: [],
+        summary: "The configured webhook URL returned HTTP 404. Check that its host and path match the app's actual webhook route."},
+      manifest: {session_id: "vs_receipt"}, evidence: {raw: "large private archive"}};
+  }
   if (path.includes("/workflows/") && path.endsWith("/run")) {
     return {
       flow_name: "accept_payment",
@@ -76,6 +100,7 @@ function cannedBackendResponse(path) {
 
 const VERIFY_RESULT = {
   pattern_id: "webhook_duplicate_side_effect",
+  provider: "stripe", evidence_scope: "reference_handlers", app_verified: false,
   mode: "handler_diff",
   disclaimer: "reference handlers, not your code",
   probes: [
@@ -114,6 +139,140 @@ before(async () => {
 after(() => { globalThis.fetch = realFetch; });
 
 // ── The tests ───────────────────────────────────────────────────────────
+
+test("validation exposes and forwards both halves of the failure probe loop", async () => {
+  const { tools } = await client.listTools();
+  const tool = tools.find((t) => t.name === "validate_integration");
+  assert.ok(tool.inputSchema.properties.arm);
+  assert.ok(tool.inputSchema.properties.probe);
+  for (const action of ["arm", "probe"]) {
+    httpCalls.length = 0;
+    const res = await client.callTool({
+      name: "validate_integration",
+      arguments: { session_id: "vs_test", [action]: "paddle:webhook_duplicate_delivery",
+        ...(action === "probe" ? { run_id: "vr_test" } : {}) },
+    });
+    assert.notEqual(res.isError, true);
+    const call = httpCalls.find((c) => c.path === "/api/mcp/validate_integration");
+    assert.ok(call);
+    assert.equal(call.body.session_id, "vs_test");
+    assert.equal(call.body[action], "paddle:webhook_duplicate_delivery");
+    assert.equal(call.body[action === "arm" ? "probe" : "arm"], null);
+    assert.equal(call.body.run_id, action === "probe" ? "vr_test" : null);
+  }
+});
+
+test("hosted validation directs agents to the recommended app suite before reference tools", async () => {
+  const { tools } = await client.listTools();
+  const tool = tools.find((t) => t.name === "validate_integration");
+  assert.ok(tool);
+  assert.match(tool.description, /follow the returned `next_action`/i);
+  assert.match(tool.description, /only when it is non-null and its arguments are complete/i);
+  assert.match(tool.description, /never execute while host-side setup is pending/i);
+  assert.match(tool.description, /do not ask the user to run a manual flow first/i);
+  assert.match(tool.description, /do not substitute.*guide, quickrun, list_workflows/i);
+  assert.match(tool.description, /receipt_recovery_v1 includes R1-R4/i);
+  assert.match(tool.description, /secret_handoff_url/i);
+  assert.match(tool.description, /PADDLE_API_KEY, RESEND_API_KEY, and PADDLE_WEBHOOK_SECRET/i);
+  assert.match(tool.description, /responsible for completing this setup/i);
+  assert.match(tool.description, /greenfield app.*publish a temporary test build first/i);
+  assert.match(tool.description, /400 signature rejection is expected.*307\/login redirect is a blocker/i);
+  assert.match(tool.description, /After the successful preflight, configure the suite/i);
+  assert.match(tool.description, /execute only after the host-side setup actions are complete/i);
+  assert.match(tool.description, /after every required check is held.*remove only the test secrets/i);
+  assert.match(tool.description, /configure separate development\/staging credentials/i);
+  assert.match(tool.description, /do not ask the human to discover endpoints/i);
+  assert.match(tool.description, /report its `execution_diagnostics` field directly/i);
+  assert.match(tool.description, /Paddle checkout is a separate app-owned browser flow/i);
+  assert.match(tool.description, /do not imply FetchSandbox hosts the merchant's payment UI/i);
+  assert.match(tool.description, /Paddle Sandbox default payment link or per-transaction override/i);
+  assert.match(tool.description, /transaction creation alone is not payment proof/i);
+});
+
+test("invalid validation actions never reach the backend", async () => {
+  for (const args of [{ arm: "p" }, { probe: "p" }, { session_id: "vs_test", arm: "p", probe: "p" },
+    { session_id: "vs_test", probe: "p" }, { session_id: "vs_test", cancel: true },
+    { session_id: "vs_test", arm: "p", run_id: "old" },
+    { session_id: "vs_test", cancel: true, probe: "p", run_id: "old" }]) {
+    httpCalls.length = 0;
+    const res = await client.callTool({ name: "validate_integration", arguments: args });
+    assert.equal(res.isError, true);
+    assert.equal(httpCalls.length, 0);
+  }
+});
+
+test("validation cancellation forwards the exact attempt ID", async () => {
+  httpCalls.length = 0;
+  const result = await client.callTool({ name: "validate_integration",
+    arguments: { session_id: "vs_test", run_id: "vr_test", cancel: true } });
+  assert.notEqual(result.isError, true);
+  const call = httpCalls.find((c) => c.path === "/api/mcp/validate_integration");
+  assert.equal(call.body.run_id, "vr_test");
+  assert.equal(call.body.cancel, true);
+});
+
+test("receipt configuration and execution survive the actual MCP dispatch", async () => {
+  const { tools } = await client.listTools();
+  const tool = tools.find(t => t.name === "validate_integration");
+  for (const field of ["suite", "receipt_config", "execute"]) assert.ok(tool.inputSchema.properties[field]);
+  const config = {webhook_url: "https://shop.example/webhook", recipient_a: "a@example.test",
+    recipient_b: "b@example.test", purchase_marker: {field: "html"}, observation_seconds: 2,
+    app_version: "test-build", source_lookup_required: true};
+  httpCalls.length = 0;
+  const configured = await client.callTool({name: "validate_integration", arguments: {
+    session_id: "vs_receipt", suite: "receipt_delivery_v1", receipt_config: config}});
+  assert.notEqual(configured.isError, true);
+  assert.deepEqual(httpCalls.at(-1).body.receipt_config, config);
+  assert.equal(httpCalls.at(-1).body.suite, "receipt_delivery_v1");
+  httpCalls.length = 0;
+  const result = await client.callTool({name: "validate_integration", arguments: {
+    session_id: "vs_receipt", execute: true, run_id: "vr_receipt"}});
+  assert.notEqual(result.isError, true);
+  assert.equal(httpCalls[0].body.execute, true);
+  assert.equal(httpCalls[0].body.async_job, true);
+  assert.equal(httpCalls[0].body.run_id, "vr_receipt");
+  assert.ok(httpCalls.some(c => c.path.endsWith("/jobs/receipt_job")));
+  const payload = JSON.parse(result.content[0].text);
+  assert.equal(payload.app_verified, false);
+  assert.equal(payload.checks.length, 4);
+  assert.equal(payload.receipt_url, "/runs/sb_receipt?flow=vr_receipt");
+  assert.equal(payload.manifest, undefined);
+  assert.equal(payload.evidence, undefined);
+  assert.equal(payload.execution_diagnostics.failed_deliveries[0].code, "webhook_route_not_found");
+  assert.match(payload.message_for_user, /host and path match the app's actual webhook route/);
+  assert.match(payload.execution_diagnostics.summary, /host and path match the app's actual webhook route/);
+});
+
+test("hosted MCP preserves staged handoffs and does not advertise premature execution", async () => {
+  const start = await client.callTool({name: "validate_integration", arguments: {providers: ["paddle", "resend"]}});
+  const started = JSON.parse(start.content[0].text);
+  assert.equal(started.next_action, "inspect_app_then_configure_receipt_suite");
+  assert.equal(started.next_tool_call, null);
+  assert.deepEqual(started.missing_configuration, ["webhook_url"]);
+  assert.ok(started.application_setup_policy.replit_private_development_url);
+
+  const configured = await client.callTool({name: "validate_integration", arguments: {
+    session_id: "vs_receipt", suite: "receipt_recovery_v1",
+    receipt_config: {webhook_url: "https://shop.example/webhook", recipient_a: "a@example.test",
+      recipient_b: "b@example.test", purchase_marker: {field: "html"},
+      app_version: "build-1", source_lookup_required: true}}});
+  const handoff = JSON.parse(configured.content[0].text);
+  assert.equal(handoff.next_action, "configure_app_then_execute");
+  assert.equal(handoff.next_tool_call, null);
+  assert.deepEqual(handoff.setup_actions_before_execute, ["preflight", "bind twins", "save secrets"]);
+});
+
+test("invalid receipt execution is rejected before sending a request", async () => {
+  for (const args of [{providers:["paddle"], execute:true},
+    {session_id:"s", execute:true}, {session_id:"s", run_id:"r", execute:true, cancel:true},
+    {session_id:"s", receipt_config:{webhook_url:"https://example.test"}},
+    {session_id:"s", suite:"receipt_delivery_v1", execute:true, run_id:"r"}]) {
+    httpCalls.length=0;
+    const result=await client.callTool({name:"validate_integration", arguments:args});
+    assert.equal(result.isError,true);
+    assert.equal(httpCalls.length,0);
+  }
+});
 
 test("Claude/Cursor discovers the tools (tools/list)", async () => {
   const { tools } = await client.listTools();
@@ -170,6 +329,9 @@ test("user proves a fix → verify_behavior forwards ids + returns the diff", as
 
   const out = JSON.parse(res.content[0].text);
   assert.equal(out.confirmed, true, "confirmed = expectations met AND a real divergence exists");
+  assert.equal(out.provider, "stripe", "provider identity must survive the job poll and MCP dispatcher");
+  assert.equal(out.evidence_scope, "reference_handlers");
+  assert.equal(out.app_verified, false);
   assert.equal(out.probes.length, 2);
   // Probe 0 is a SANITY probe (buggy 200 == fixed 200): it matched its
   // expectation but is NOT a behavioral divergence — the old code mislabeled
@@ -267,6 +429,154 @@ test("verify_behavior: a run of only sanity probes is NOT a confirmation", async
     assert.ok(out.probes.every((p) => p.divergent === false), "no probe diverged");
   } finally {
     globalThis.fetch = realFetch;
+  }
+});
+
+test("verify_behavior preserves reference provider identity and execution errors", async () => {
+  const { runVerifyBehavior } = await import("../dist/tools/verify_behavior.js");
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    pattern_id: "notification_duplicate_side_effect",
+    provider: "paddle", evidence_scope: "reference_handlers", app_verified: false,
+    mode: "order_fuzz", error: "Reference handler could not start",
+  });
+  try {
+    const out = await runVerifyBehavior({
+      bug_pattern_id: "notification_duplicate_side_effect", sandbox_id: "sb_paddle",
+    });
+    assert.equal(out.error, "Reference handler could not start");
+    assert.equal(out.provider, "paddle");
+    assert.equal(out.evidence_scope, "reference_handlers");
+    assert.equal(out.app_verified, false);
+    assert.equal(out.confirmed, false);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("verify_behavior cannot confirm a failed result even when it also carries positive evidence", async () => {
+  const { runVerifyBehavior } = await import("../dist/tools/verify_behavior.js");
+  const previousFetch = globalThis.fetch;
+  try {
+    for (const result of [
+      { ...VERIFY_RESULT, error: "A required probe failed to execute" },
+      { mode: "order_fuzz", error: "Partial execution", order_fuzz: { confirmed: true } },
+      { ...VERIFY_RESULT, status: "error" },
+      { ...VERIFY_RESULT, probes: [{ ...VERIFY_RESULT.probes[1],
+        buggy_response: { status: 409, error: "Handler disconnected" } }] },
+    ]) {
+      // A positive server summary cannot override a visible execution error.
+      globalThis.fetch = async () => Response.json({ ...result, confirmed: true });
+      const out = await runVerifyBehavior({ bug_pattern_id: "p" });
+      assert.equal(out.confirmed, false, JSON.stringify(result));
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("verify_behavior respects a server refusal even when the available probes look positive", async () => {
+  const { runVerifyBehavior } = await import("../dist/tools/verify_behavior.js");
+  const previousFetch = globalThis.fetch;
+  try {
+    // Only the backend knows the configured probe count. A returned subset can
+    // look successful while the complete configured reference was not measured.
+    for (const result of [
+      { ...VERIFY_RESULT, confirmed: false, probes: [VERIFY_RESULT.probes[1]] },
+      { provider: "stripe", mode: "either", confirmed: false, simulations: [VERIFY_RESULT] },
+      { provider: "stripe", mode: "either", confirmed: true,
+        simulations: [{ ...VERIFY_RESULT, confirmed: false }] },
+      { mode: "order_fuzz", confirmed: false, order_fuzz: { confirmed: true } },
+    ]) {
+      globalThis.fetch = async () => Response.json(result);
+      const out = await runVerifyBehavior({ bug_pattern_id: "p" });
+      assert.equal(out.confirmed, false, JSON.stringify(result));
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("verify_behavior preserves whether the backend actually saved the receipt", async () => {
+  const { runVerifyBehavior } = await import("../dist/tools/verify_behavior.js");
+  const previousFetch = globalThis.fetch;
+  try {
+    for (const receipt_attached of [false, true, undefined]) {
+      globalThis.fetch = async () => Response.json({ ...VERIFY_RESULT, receipt_attached });
+      const out = await runVerifyBehavior({ bug_pattern_id: "p" });
+      assert.equal(out.receipt_attached, receipt_attached);
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("verify_behavior keeps either-mode cards and cannot hide a failed or empty card", async () => {
+  const { runVerifyBehavior } = await import("../dist/tools/verify_behavior.js");
+  const previousFetch = globalThis.fetch;
+  const classification = { origin: "both", confidence: 0.5, reason: "Ambiguous symptom" };
+  try {
+    for (const secondCard of [
+      { mode: "producer_diff", error: "Reference producer could not start" },
+      { mode: "producer_diff", probes: [] },
+    ]) {
+      globalThis.fetch = async () => Response.json({
+        pattern_id: "p", provider: "paddle", mode: "either", classification,
+        simulations: [{ ...VERIFY_RESULT, provider: "paddle" },
+          { ...secondCard, provider: "paddle", classification }],
+      });
+      const out = await runVerifyBehavior({ bug_pattern_id: "p" });
+      assert.equal(out.confirmed, false);
+      assert.deepEqual(out.classification, classification);
+      assert.equal(out.simulations.length, 2);
+      assert.equal(out.simulations[0].confirmed, true);
+      assert.equal(out.simulations[1].confirmed, false);
+      assert.equal(out.simulations[1].error, secondCard.error);
+      assert.deepEqual(out.simulations[1].classification, classification);
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("verify_behavior confirms completed reference cards without claiming application verification", async () => {
+  const { runVerifyBehavior } = await import("../dist/tools/verify_behavior.js");
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    provider: "paddle", mode: "either", app_verified: true, confirmed: true,
+    simulations: [{ ...VERIFY_RESULT, provider: "paddle" },
+      { provider: "paddle", mode: "order_fuzz", order_fuzz: {
+        confirmed: true, confirmed_by: ["idempotency"],
+      } }],
+  });
+  try {
+    const out = await runVerifyBehavior({ bug_pattern_id: "p" });
+    assert.equal(out.confirmed, true);
+    assert.equal(out.app_verified, false, "reference handlers cannot verify the user's app");
+    assert.equal(out.evidence_scope, "reference_handlers");
+    assert.equal(out.simulations.length, 2);
+    assert.ok(out.simulations.every((card) => card.confirmed && card.app_verified === false));
+    assert.deepEqual(out.simulations[1].confirmed_by, ["idempotency"]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("verify_behavior rejects confirmation when a nested card names another provider", async () => {
+  const { runVerifyBehavior } = await import("../dist/tools/verify_behavior.js");
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    provider: "paddle", mode: "either", confirmed: true,
+    simulations: [{ ...VERIFY_RESULT, provider: "stripe" }],
+  });
+  try {
+    const out = await runVerifyBehavior({ bug_pattern_id: "p" });
+    assert.equal(out.confirmed, false);
+    assert.match(out.error, /provider/i);
+    assert.equal(out.provider, "paddle");
+    assert.equal(out.simulations[0].provider, "stripe", "keep the mismatch inspectable");
+  } finally {
+    globalThis.fetch = previousFetch;
   }
 });
 

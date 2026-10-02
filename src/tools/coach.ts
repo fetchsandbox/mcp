@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { postJson } from "../client.js";
 import { scanRepoSignals } from "./repo_signals.js";
+import { isHosted } from "../request_context.js";
 
 /**
  * Detect provider SDKs installed in the user's repo — the deterministic spec
@@ -120,6 +121,16 @@ export const coachTool = {
     "`tool_call.args`, then call coach again with the result in " +
     "`context`. " +
     "(5) If `next_action=done`: end the session. " +
+    "For a hosted app-builder request to build or test an integration, " +
+    "keep the user's simple goal intact and let the server route all named " +
+    "providers into one validation session. When FetchSandbox returns twin " +
+    "bindings, treat those as temporary TEST credentials: configure them " +
+    "server-side in the app-builder project, never ask the user for live " +
+    "Paddle/Resend keys, and never claim they were applied until the builder " +
+    "reports the change and the verifier observes app traffic. Infer app " +
+    "configuration details from the project when available; ask the user " +
+    "only for a fact the builder cannot discover. The deterministic verifier, " +
+    "not this conversation, owns the verdict. " +
     "The state machine is server-side — DON'T try to predict the next " +
     "step or skip ahead; let the server drive.",
   inputSchema: {
@@ -161,8 +172,10 @@ export async function runCoach(input: CoachInput): Promise<CoachResponse> {
   // can pin the provider from FACTS, not a guess: `dependencies` + `detected_specs`
   // (presence) and `code_probe` (per provider, which webhook guard its handler
   // carries — the funnel's code-probe leg). Runs where the repo is (this MCP
-  // process's cwd); only the compact JSON travels, never source. Best-effort.
-  if (input.intent && !input.session_id) {
+  // process's cwd) on stdio only. A hosted process owns our server checkout,
+  // not the customer's app. Forward hosted context as the caller declared it;
+  // do not invent supporting evidence from the server's files.
+  if (!isHosted() && input.intent && !input.session_id) {
     const existing = (input.context || {}) as Record<string, unknown>;
     if (!existing.dependencies && !existing.detected_specs && !existing.code_probe) {
       try {

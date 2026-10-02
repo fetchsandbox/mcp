@@ -103,20 +103,46 @@ function callerPlatform(req: IncomingMessage): string {
   const hay = origin + " " + ua;
   for (const [needle, name] of [
     ["lovable", "lovable"], ["bolt.new", "bolt"], ["stackblitz", "bolt"],
-    ["replit", "replit"], ["base44", "base44"],
+    ["replit", "replit"], ["base44", "base44"], ["n8n", "n8n"],
     ["claude", "claude"], ["cursor", "cursor"], ["openai", "chatgpt"],
   ] as const) {
     if (hay.includes(needle)) return name;
   }
   // Honest default. "unknown" is a real answer; guessing a platform would
-  // put made-up rows in the retention split.
+  // put made-up rows in the retention split. The RAW origin is forwarded
+  // separately (rawOrigin below), so an unrecognised caller is measurable by
+  // name even though we refuse to guess which product it is — that is what
+  // makes the open door above reviewable instead of merely permissive.
   return "hosted-unknown";
 }
 
 function originAllowed(req: IncomingMessage): boolean {
   const origin = req.headers.origin;
   if (!origin) return true;               // server-to-server, no browser
-  return ALLOWED_ORIGINS.includes(origin);
+
+  // DO NOT BLOCK A CALLER BECAUSE WE HAVE NOT HEARD OF THEM. (Raj, 2026-09-26.)
+  //
+  // The allowlist could only ever name platforms we already knew, which makes
+  // it a list of who is allowed to discover us. Measured the same day: n8n —
+  // whose MCP Client Tool node has spoken streamable HTTP since 1.104.0, so it
+  // could otherwise use us today — got {"error":"origin not allowed"}. Worse,
+  // every SELF-HOSTED n8n has its own origin, so no allowlist can ever
+  // enumerate that population. The rule was turning away the exact users we
+  // are trying to reach.
+  //
+  // WHY THIS IS SAFE HERE, and would not be everywhere: Origin validation
+  // defends against a browser page spending a victim's AMBIENT credentials
+  // (cookies) — DNS rebinding and CSRF. This transport has none. Auth is a
+  // Bearer token read from the Authorization header (bearerOf), never a
+  // cookie, and a malicious page cannot read another origin's token. With no
+  // ambient credential there is nothing for a forged origin to spend.
+  //
+  // Enforcement stays available for the day someone abuses it, but it is now
+  // OPT-IN rather than the default: set MCP_ORIGIN_ENFORCE=1.
+  if (process.env.MCP_ORIGIN_ENFORCE === "1") {
+    return ALLOWED_ORIGINS.includes(origin);
+  }
+  return true;
 }
 
 function json(res: ServerResponse, status: number, body: unknown) {
@@ -167,7 +193,13 @@ async function handleMcp(req: IncomingMessage, res: ServerResponse, reqId: strin
   // shared credential. Absent bearer => no key => the backend answers 401,
   // which is the correct, fail-closed outcome for a hosted caller.
   await withRequestIdentity(
-    { apiKey: bearerOf(req), requestId: reqId, platform: callerPlatform(req) },
+    {
+      apiKey: bearerOf(req),
+      requestId: reqId,
+      platform: callerPlatform(req),
+      // The caller's literal Origin. Recorded, never matched against a list.
+      rawOrigin: String(req.headers.origin || ""),
+    },
     () => transport.handleRequest(req, res),
   );
 }

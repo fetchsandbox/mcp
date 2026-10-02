@@ -58,6 +58,12 @@ export interface RequestIdentity {
    * detectIde() cannot do this in a container, where there is no editor env.
    */
   platform?: string;
+  /**
+   * The caller's literal Origin header, or "". Sent upstream as x-mcp-origin
+   * so an unrecognised platform can still be COUNTED. We stopped blocking
+   * unknown origins (see http.ts); measuring them is what replaces the block.
+   */
+  rawOrigin?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestIdentity>();
@@ -78,13 +84,15 @@ export function currentIdentity(): RequestIdentity | undefined {
 }
 
 /**
- * True when this process is the hosted transport.
+ * True inside an HTTP request, or when the deployment declares hosted mode.
  *
  * Gates the device flow. `withSignIn` calls writeCredentials on success, and
  * on a shared server that write IS the leak — one user's browser sign-in
  * would become every user's credential. A hosted caller presents a key the
  * platform already holds; it never completes a browser flow on our box.
+ * Request scope is authoritative even when a local HTTP launch omits the
+ * deployment flag. Stdio and CI do not enter this scope.
  */
 export function isHosted(): boolean {
-  return process.env.FS_MCP_HOSTED === "1";
+  return currentIdentity() !== undefined || process.env.FS_MCP_HOSTED === "1";
 }

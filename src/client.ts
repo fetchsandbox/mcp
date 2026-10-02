@@ -50,6 +50,10 @@ export function buildHeaders(extra?: Record<string, string>): Record<string, str
   // A hosted request knows its platform from Origin; stdio knows its editor
   // from env. Whichever is present is the truthful answer.
   headers["x-mcp-client"] = currentIdentity()?.platform || ide;
+  // Raw Origin for hosted callers we do not recognise. This is how a platform
+  // we have never heard of shows up in the numbers instead of being turned away.
+  const _origin = currentIdentity()?.rawOrigin;
+  if (_origin) headers["x-mcp-origin"] = _origin;
   // The session id IS the install id (see auth.ts) and the backend already
   // reads that header everywhere, so a key is the only thing to add. Absent
   // credentials send nothing and the request behaves exactly as it did before.
@@ -59,8 +63,10 @@ export function buildHeaders(extra?: Record<string, string>): Record<string, str
   // otherwise one tenant's key serves another tenant's request. stdio and CI
   // never enter a request scope, so they fall through to exactly the source
   // they used before. See request_context.ts for the leak this prevents.
-  const perRequest = currentIdentity()?.apiKey;
-  const apiKey = perRequest || readCredentials()?.apiKey;
+  const identity = currentIdentity();
+  // An empty bearer is still a hosted request. Falling back on falsy keys
+  // would authenticate an anonymous caller as the server's own account.
+  const apiKey = identity !== undefined ? identity.apiKey : readCredentials()?.apiKey;
   if (apiKey) headers["authorization"] = `Bearer ${apiKey}`;
   return headers;
 }

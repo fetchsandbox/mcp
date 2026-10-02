@@ -54,9 +54,12 @@ test("the shared core registers every tool with its annotations", async () => {
   }
 });
 
-test("the HOSTED transport answers a real MCP handshake", async (t) => {
+test("HTTP advertises the canonical hosted tools without a deployment flag", async (t) => {
+  const env = { ...process.env, PORT: String(PORT), MCP_HTTP_PATH: PATH,
+                MCP_HTTP_HOST: "127.0.0.1" };
+  delete env.FS_MCP_HOSTED;
   const proc = spawn(process.execPath, ["dist/http.js"], {
-    env: { ...process.env, PORT: String(PORT), MCP_HTTP_PATH: PATH, MCP_HTTP_HOST: "127.0.0.1" },
+    env,
     stdio: ["ignore", "ignore", "pipe"],
   });
   t.after(() => proc.kill("SIGKILL"));
@@ -92,6 +95,25 @@ test("the HOSTED transport answers a real MCP handshake", async (t) => {
   const text = await res.text();
   assert.match(text, /"serverInfo"|"protocolVersion"/,
     `initialize answered without a serverInfo: ${text.slice(0, 200)}`);
+
+  const listed = await fetch(`http://127.0.0.1:${PORT}${PATH}`, {
+    method: "POST",
+    headers: { "content-type": "application/json",
+               accept: "application/json, text/event-stream" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+  });
+  assert.equal(listed.status, 200);
+  const listedText = await listed.text();
+  const payload = listed.headers.get("content-type")?.includes("text/event-stream")
+    ? listedText.split(/\r?\n/).filter((line) => line.startsWith("data:"))
+        .map((line) => JSON.parse(line.slice(5))).find((message) => message.id === 2)
+    : JSON.parse(listedText);
+  assert.ok(payload?.result?.tools, "tools/list must return a tool registry");
+  assert.deepEqual(payload.result.tools.map((tool) => tool.name).sort(),
+                   [...HOSTED_TOOL_NAMES].sort());
+  assert.deepEqual(payload.result.tools,
+                   ALL_TOOLS.filter((tool) => HOSTED_TOOL_NAMES.has(tool.name)),
+                   "HTTP must retain canonical schemas and descriptions");
 });
 
 test("an unknown path 404s and says where the endpoint is", async (t) => {
@@ -113,30 +135,39 @@ test("an unknown path 404s and says where the endpoint is", async (t) => {
   assert.match(body.hint, /mcp/, "a 404 should name the real endpoint");
 });
 
-test("a disallowed browser Origin is refused", async (t) => {
-  // DNS-rebinding protection. The MCP spec requires this of any HTTP server:
-  // without it a hostile page can drive a credentialed MCP server. A request
-  // with NO Origin is server-to-server and must still be allowed, which is
-  // how every one of these platforms actually calls us.
+for (const enforce of [false, true]) test(`Origin policy: enforcement ${enforce ? "enabled" : "disabled"}`, async (t) => {
+  // Enforcement became opt-in on Sep 26. Exercise both policies with a valid
+  // MCP request, so an unrelated 406 cannot masquerade as Origin rejection.
+  const port = PORT + (enforce ? 2 : 10);
   const proc = spawn(process.execPath, ["dist/http.js"], {
-    env: { ...process.env, PORT: String(PORT + 2), MCP_HTTP_PATH: PATH,
+    env: { ...process.env, PORT: String(port), MCP_HTTP_PATH: PATH,
+           MCP_ORIGIN_ENFORCE: enforce ? "1" : "",
            MCP_HTTP_HOST: "127.0.0.1", MCP_ALLOWED_ORIGINS: "https://lovable.dev" },
     stdio: ["ignore", "ignore", "pipe"],
   });
   t.after(() => proc.kill("SIGKILL"));
   let up = false;
   for (let i = 0; i < 60 && !up; i++) {
-    try { up = (await fetch(`http://127.0.0.1:${PORT + 2}/healthz`)).ok; }
+    try { up = (await fetch(`http://127.0.0.1:${port}/healthz`)).ok; }
     catch { await sleep(100); }
   }
   assert.ok(up, "server never started");
 
-  const bad = await fetch(`http://127.0.0.1:${PORT + 2}${PATH}`, {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: "https://evil.example" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
-  });
-  assert.equal(bad.status, 403, "a hostile Origin was served");
+  for (const origin of ["https://unknown.example", "https://lovable.dev", null]) {
+    const res = await fetch(`http://127.0.0.1:${port}${PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json",
+        accept: "application/json, text/event-stream", ...(origin ? { origin } : {}) },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {
+        protocolVersion: "2025-06-18", capabilities: {},
+        clientInfo: { name: "origin-policy-test", version: "1" },
+      } }),
+    });
+    const rejected = enforce && origin === "https://unknown.example";
+    assert.equal(res.status, rejected ? 403 : 200, `origin=${origin}, enforce=${enforce}`);
+    if (rejected) assert.equal((await res.json()).error, "origin not allowed");
+    else assert.match(await res.text(), /"serverInfo"/);
+  }
 });
 
 
@@ -262,7 +293,7 @@ test("one caller's key never serves another caller's request", async (t) => {
       headers: {
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
-        authorization: `Bearer ${key}`,
+        ...(key ? { authorization: `Bearer ${key}` } : {}),
         "content-length": Buffer.byteLength(body),
       },
     }, (res) => { res.resume(); res.on("end", resolve); });
@@ -272,12 +303,15 @@ test("one caller's key never serves another caller's request", async (t) => {
 
   await callAs("fsk_tenant_AAA");
   await callAs("fsk_tenant_BBB");
+  await callAs();
 
   assert.ok(seen.some((h) => h.includes("fsk_tenant_AAA")),
     `tenant A's key never reached the backend: ${JSON.stringify(seen)}\n` +
     `child stderr:\n${childErr.slice(-800)}`);
   assert.ok(seen.some((h) => h.includes("fsk_tenant_BBB")),
     `tenant B's key never reached the backend: ${JSON.stringify(seen)}`);
+  assert.equal(seen.at(-1), "(none)",
+    `a caller without a bearer must remain anonymous: ${JSON.stringify(seen)}`);
   assert.ok(!seen.some((h) => h.includes("process_wide")),
     `a process-wide key served a request — this is the cross-tenant leak: ${JSON.stringify(seen)}`);
 });

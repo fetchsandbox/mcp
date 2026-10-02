@@ -29,7 +29,7 @@ import { isHosted } from "./request_context.js";
 import { importSpecTool, runImportSpec } from "./tools/import_spec.js";
 import { listSpecsTool, runListSpecs } from "./tools/list_specs.js";
 import { listWorkflowsTool, runListWorkflows } from "./tools/list_workflows.js";
-import { validateIntegrationTool, runValidateIntegration } from "./tools/validate_integration.js";
+import { validateIntegrationTool, runValidateIntegration, type ValidateIntegrationInput } from "./tools/validate_integration.js";
 import { listRunsTool, runListRuns } from "./tools/list_runs.js";
 import {
   listScenariosTool, runListScenarios,
@@ -336,6 +336,14 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
               typeof a.app_base_url === "string" ? a.app_base_url : undefined,
             session_id:
               typeof a.session_id === "string" ? a.session_id : undefined,
+            arm: typeof a.arm === "string" ? a.arm : undefined,
+            probe: typeof a.probe === "string" ? a.probe : undefined,
+            run_id: typeof a.run_id === "string" ? a.run_id : undefined,
+            cancel: typeof a.cancel === "boolean" ? a.cancel : undefined,
+            suite: typeof a.suite === "string" ? a.suite as ValidateIntegrationInput["suite"] : undefined,
+            receipt_config: a.receipt_config && typeof a.receipt_config === "object"
+              ? a.receipt_config as ValidateIntegrationInput["receipt_config"] : undefined,
+            execute: typeof a.execute === "boolean" ? a.execute : undefined,
           });
           break;
         case listWorkflowsTool.name:

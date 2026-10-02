@@ -1,5 +1,6 @@
 import { postJson } from "../client.js";
 import { scanRepoSignals } from "./repo_signals.js";
+import { isHosted } from "../request_context.js";
 
 /**
  * Guided integration router — Phase 1.
@@ -104,17 +105,17 @@ export async function runGuide(input: GuideInput): Promise<GuideResponse> {
   // confidence 0.95. A confident route to the wrong provider is worse than no
   // route — everything downstream inherits it.
   //
-  // The scan reads the manifest in the MCP server's own cwd, which IS the
-  // user's project. Best-effort: a repo it cannot read sends nothing and the
-  // router behaves exactly as before.
+  // Only stdio's cwd is the user's project. Hosted requests must forward the
+  // caller's declarations without supplementing them from our server checkout.
+  // Best-effort: a repo it cannot read sends nothing.
   const body: Record<string, unknown> = { ...input };
   try {
-    const sig = scanRepoSignals();
+    const sig = isHosted() ? undefined : scanRepoSignals();
     const ctx: Record<string, unknown> = {};
-    if (sig.detected_specs?.length) ctx.detected_specs = sig.detected_specs;
+    if (sig?.detected_specs?.length) ctx.detected_specs = sig.detected_specs;
     // code_probe is the tie-breaker the scanner computes when several providers
     // survive: whose handler the repo actually implements, not merely imports.
-    if (sig.code_probe) ctx.code_probe = sig.code_probe;
+    if (sig?.code_probe) ctx.code_probe = sig.code_probe;
     if (Object.keys(ctx).length) {
       // A caller-supplied context wins — an explicit hint is not a guess.
       body.context = { ...ctx, ...(input.context as object ?? {}) };
