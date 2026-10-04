@@ -21,6 +21,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 // ── Backend interception ────────────────────────────────────────────────
 const httpCalls = [];
 const realFetch = globalThis.fetch;
+let receiptJobRunning = false;
+let receiptStatusRunning = false;
+let receiptOversized = false;
 
 function cannedBackendResponse(path) {
   if (path.endsWith("/api/mcp/validate_integration")) {
@@ -31,12 +34,16 @@ function cannedBackendResponse(path) {
       application_setup_policy: {replit_private_development_url: {steps: ["restore privacy"]}}};
     if (body?.suite) return {step: "configure_app", next_action: "configure_app_then_execute",
       setup_actions_before_execute: ["preflight", "bind twins", "save secrets"], next_tool_call: null};
+    if (receiptStatusRunning) return {status: "running", run_id: "vr_receipt", suite: "receipt_recovery_v1",
+      execution_progress: {case: "sink_timeout", stage: "first", phase: "delivering", checkpoints_recorded: 18, checkpoints_expected: 33}};
     return {};
   }
   if (path.endsWith("/api/mcp/jobs/receipt_job")) {
+    if (receiptJobRunning) return {status: "running"};
     return {status: "done", suite: "receipt_delivery_v1",
       verdict: "inconclusive", app_verified: false,
-      checks: ["R1", "R2", "R3", "R4"].map(id => ({id, status: "unmeasured"})),
+      checks: ["R1", "R2", "R3", "R4"].map(id => ({id, status: "unmeasured",
+        ...(receiptOversized ? {detail: 'recorded purchase evidence '.repeat(5000)} : {})})),
       message_for_user: "The configured webhook URL returned HTTP 404. Check that its host and path match the app's actual webhook route.",
       receipt_url: "/runs/sb_receipt?flow=vr_receipt",
       execution_diagnostics: {delivery_attempts: 1, successful_deliveries: 0,
@@ -44,7 +51,10 @@ function cannedBackendResponse(path) {
           code: "webhook_route_not_found", http_status: 404}],
         checkpoints_recorded: 0, checkpoints_expected: 6,
         missing_checkpoints: ["same_customer.first"], error_codes: [],
-        summary: "The configured webhook URL returned HTTP 404. Check that its host and path match the app's actual webhook route."},
+        summary: "The configured webhook URL returned HTTP 404. Check that its host and path match the app's actual webhook route.",
+        ...(receiptOversized ? {trace: Array.from({length: 295}, (_, i) => ({kind: 'transport_event',
+          phase: 'matching_retry', request_id: 'held-' + i, retry_request_id: 'retry-' + i,
+          request: {body: 'large receipt body '.repeat(1000)}}))} : {})},
       manifest: {session_id: "vs_receipt"}, evidence: {raw: "large private archive"}};
   }
   if (path.includes("/workflows/") && path.endsWith("/run")) {
@@ -241,6 +251,59 @@ test("receipt configuration and execution survive the actual MCP dispatch", asyn
   assert.equal(payload.execution_diagnostics.failed_deliveries[0].code, "webhook_route_not_found");
   assert.match(payload.message_for_user, /host and path match the app's actual webhook route/);
   assert.match(payload.execution_diagnostics.summary, /host and path match the app's actual webhook route/);
+});
+
+test("large receipt stays readable in hosted tool while its full trace remains in the receipt", async () => {
+  receiptOversized = true;
+  try {
+    const response = await client.callTool({name: 'validate_integration', arguments: {
+      session_id: 'vs_receipt', run_id: 'vr_receipt', execute: true}});
+    const result = JSON.parse(response.content[0].text);
+    assert.ok(response.content[0].text.length < 25_000);
+    assert.equal(result.checks.length, 4);
+    assert.ok(result.checks.every(row => row.status === 'unmeasured' && row.detail_truncated && row.detail.length === 1000));
+    assert.equal(result.execution_diagnostics.trace.length, 32);
+    assert.equal(result.execution_diagnostics.trace_omitted_from_tool, 263);
+    assert.equal(result.execution_diagnostics.trace_truncated, true);
+    assert.equal(result.execution_diagnostics.trace[0].retry_request_id, 'retry-0');
+    assert.equal(result.execution_diagnostics.trace[0].request, undefined);
+    assert.match(result.execution_diagnostics.trace_access, /full sanitized timeline/);
+  } finally { receiptOversized = false; }
+});
+
+test("running receipt job returns promptly and directs status retrieval without another execute", async () => {
+  receiptJobRunning = true;
+  httpCalls.length = 0;
+  try {
+    const response = await client.callTool({name: "validate_integration", arguments: {
+      session_id: "vs_receipt", run_id: "vr_receipt", execute: true}});
+    const result = JSON.parse(response.content[0].text);
+    assert.equal(result.status, "running");
+    assert.equal(result.app_verified, false);
+    assert.equal(result.run_id, "vr_receipt");
+    assert.equal(result.retry_after_seconds, 10);
+    assert.deepEqual(result.next_tool_call, {tool: "validate_integration", arguments: {session_id: "vs_receipt"}});
+    assert.match(result.message_for_user, /Do not send execute again/);
+    assert.equal(httpCalls.filter(c => c.path.endsWith('/jobs/receipt_job')).length, 1);
+    assert.equal(httpCalls.filter(c => c.body?.execute).length, 1);
+  } finally { receiptJobRunning = false; }
+});
+
+test("running status waits between reads, preserves progress and never executes again", async () => {
+  receiptStatusRunning = true;
+  httpCalls.length = 0;
+  const started = Date.now();
+  try {
+    const response = await client.callTool({name: "validate_integration", arguments: {session_id: "vs_receipt"}});
+    const result = JSON.parse(response.content[0].text);
+    assert.ok(Date.now() - started >= 9_900);
+    assert.equal(result.execution_progress.checkpoints_recorded, 18);
+    assert.equal(result.execution_progress.case, "sink_timeout");
+    assert.equal(result.run_id, "vr_receipt");
+    assert.equal(httpCalls.length, 2);
+    assert.ok(httpCalls.every(call => !call.body?.execute));
+    assert.equal(result.app_verified, false);
+  } finally { receiptStatusRunning = false; }
 });
 
 test("hosted MCP preserves staged handoffs and does not advertise premature execution", async () => {

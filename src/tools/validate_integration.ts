@@ -1,5 +1,4 @@
-import { postJson, ToolError } from "../client.js";
-import { pollJob } from "./jobs.js";
+import { getJson, postJson, ToolError } from "../client.js";
 
 /**
  * Point the user's OWN app at a twin, then read what it did.
@@ -240,14 +239,51 @@ export async function runValidateIntegration(
     execute: input.execute ?? false,
     async_job: input.execute ?? false,
   });
-  const completed = result.job_id
-    ? await pollJob(String(result.job_id), {maxMs: 5 * 60_000})
+  // A short backend job poll does not make the enclosing MCP HTTP request
+  // short. Recovery suites outlive its 90-second deadline. Return readiness
+  // promptly and let the caller retrieve this same session, never re-execute.
+  let completed = result.job_id
+    ? await getJson<Record<string, unknown>>(`/api/mcp/jobs/${String(result.job_id)}`)
     : result;
+  if (completed.status === "running" && hasSession && !input.execute && !input.arm && !input.probe && !input.cancel && !input.suite) {
+    await new Promise(resolve => setTimeout(resolve, 10_000));
+    completed = await postJson<Record<string, unknown>>("/api/mcp/validate_integration", {session_id: input.session_id});
+  }
+  if (completed.status === "running" && hasSession) {
+    return {...completed, session_id: input.session_id, run_id: input.run_id ?? completed.run_id,
+      step: "executing", app_verified: false, next_action: "wait_then_retrieve_same_session",
+      retry_after_seconds: 10,
+      next_tool_call: {tool: "validate_integration", arguments: {session_id: input.session_id}},
+      message_for_user: "The receipt suite is running. Wait at least 10 seconds, then retrieve this same session with session_id only. Do not send execute again, cancel, replace its credentials, or start another run while it is running."};
+  }
   // Keep the complete archive in the owned receipt. Six cumulative snapshots
   // can otherwise exhaust the hosted caller's context before it reads a verdict.
   if (completed && typeof completed === "object" &&
       "suite" in completed && ["receipt_delivery_v1", "receipt_recovery_v1"].includes(String(completed.suite)) && "verdict" in completed) {
     const {manifest: _manifest, evidence: _evidence, ...summary} = completed as Record<string, unknown>;
+    if (Array.isArray(summary.checks)) {
+      summary.checks = summary.checks.map(check => {
+        if (!check || typeof check !== "object") return check;
+        const row = check as Record<string, unknown>;
+        const detail = typeof row.detail === "string" ? row.detail : JSON.stringify(row.detail ?? "");
+        return {...row, detail: detail.slice(0, 1000), ...(detail.length > 1000 ? {detail_truncated: true} : {})};
+      });
+    }
+    if (summary.execution_diagnostics && typeof summary.execution_diagnostics === "object") {
+      const diagnostic = summary.execution_diagnostics as Record<string, unknown>;
+      const trace = Array.isArray(diagnostic.trace) ? diagnostic.trace : [];
+      const selected = trace.filter(row => row && typeof row === "object" &&
+        (row.kind === "transport_event" || (row.kind === "app_webhook" && row.http_status >= 400) ||
+         (row.kind === "provider_request" && row.transport_mode === "until_matching_retry"))).slice(0, 32);
+      const allowed = ["kind", "at", "phase", "case", "stage", "role", "request_id", "retry_request_id",
+        "http_status", "method", "path", "operation", "transport_state", "transport_mode", "release_reason",
+        "delay_ms", "client_disconnected_at", "retry_observed_at"];
+      summary.execution_diagnostics = {...diagnostic,
+        trace: selected.map(row => Object.fromEntries(allowed.filter(key => key in row).map(key => [key, row[key]]))),
+        trace_truncated: Boolean(diagnostic.trace_truncated) || selected.length < trace.length,
+        trace_omitted_from_tool: trace.length - selected.length,
+        trace_access: "The stored receipt retains the full sanitized timeline and expandable request/response fields."};
+    }
     return {...summary, evidence_access: "Full recorded evidence is available to the receipt owner through the stored receipt."};
   }
   return completed;
