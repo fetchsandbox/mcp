@@ -31,6 +31,7 @@ interface FindBugsResponse {
 export const findBugsTool = {
   name: "find_bugs",
   description:
+    "Long work returns status:running and next_tool_call:get_job within a short response. Follow that SAME job until done; never repeat this tool to poll. " +
     "FIRST STEP for any API-integration bug — webhooks, payments, auth, email, " +
     "SMS, subscriptions. Reach for this the moment a user reports a symptom in " +
     "an app that talks to a provider: 'customers charged twice', 'the webhook " +
@@ -75,6 +76,10 @@ export const findBugsTool = {
 // the compiler calls the addition an error rather than the loss. That is how
 // next_actions survived three hops and died at the fourth.
 export async function runFindBugs(input: FindBugsInput): Promise<{
+  status?: string;
+  job_id?: string;
+  next_tool_call?: unknown;
+  agent_guidance?: string;
   available: boolean;
   bugs: string | null;
   next_actions?: unknown;
@@ -97,6 +102,7 @@ export async function runFindBugs(input: FindBugsInput): Promise<{
   const raw = await startAndPoll("/api/mcp/find_bugs", body, {
     maxMs: (timeout_s + 180) * 1000,
   });
+  if (raw.status === "running") return {...raw, available: false, bugs: null, engine: "fetchsandbox", packed_bytes: bytes};
   if (raw.status === "error") {
     throw new ToolError(`FetchSandbox discovery failed: ${raw.error ?? "unknown error"}`);
   }

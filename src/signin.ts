@@ -16,7 +16,7 @@
 import { buildHeaders, getBaseUrl, ToolError } from "./client.js";
 import { installId, readCredentials, writeCredentials, type Credentials } from "./auth.js";
 import { detectIde } from "./session.js";
-import { isHosted } from "./request_context.js";
+import { currentIdentity, isHosted } from "./request_context.js";
 
 // Only ever used on a RETRY, when the human has already been shown the code and
 // is mid-sign-in. Long enough to cover a browser round trip, short enough that
@@ -151,22 +151,49 @@ export async function withSignIn<T>(call: () => Promise<T>): Promise<T> {
       return await call();
     } catch (e) {
       if (e instanceof ToolError && e.status === 401) {
-        // Point at /keys, NOT /device. The device page asks for a code that a
-        // CLI printed and never displays a key — a hosted caller has neither,
-        // so sending them there was a dead end dressed as an instruction.
-        // /keys signs in with Google or GitHub and hands over a pasteable key.
-        //
-        // Written for the AGENT to relay, because on a hosted connector the
-        // agent is the only thing that reads this. Hence the plain sentence a
-        // non-developer can act on rather than a header-shaped instruction.
+        // Prefer bounded facts from the account-key gate. Older backends have
+        // no reason header, so retain the request-context-only diagnosis.
+        // Never echo a raw backend message or credential into hosted guidance.
+        const identity = currentIdentity();
+        const fallback = identity === undefined
+          ? "FetchSandbox could not authenticate this hosted operation (HTTP 401). "
+          : identity.apiKey
+            ? "A Bearer token reached the hosted FetchSandbox MCP endpoint and was forwarded, but the backend denied this operation (HTTP 401). The response does not identify the cause. "
+            : "No usable Bearer token reached the hosted FetchSandbox MCP endpoint. ";
+        const diagnoses = {
+          missing_authorization: "The FetchSandbox backend received no Authorization header for this operation. ",
+          malformed_authorization: "The FetchSandbox backend received an Authorization header without a usable Bearer token. ",
+          unsupported_bearer: "The Bearer token received by the FetchSandbox backend is not in FetchSandbox account API key format. ",
+          account_key_unrecognized: "The FetchSandbox backend could not resolve this account API key to a user. It may be unknown, revoked, or no longer linked to an account. ",
+          identity_lookup_failed: "FetchSandbox could not look up the account API key because of a server-side identity lookup failure. Keep the current connector authentication and retry after service recovery; replacing the key may not resolve this. ",
+        };
+        const diagnosis = e.authReason
+          ? `${diagnoses[e.authReason]}Authentication diagnostic: ${e.authReason} (HTTP 401). `
+          : fallback;
+        // The transport deliberately forwards only a parsed Bearer token. A
+        // bare key/empty scheme therefore looks missing at the backend. Keep
+        // both observations so callers do not blame a dropped header or rotate
+        // a key when the real issue may be its connection-field format.
+        const ingress = identity?.authHeaderState
+          ? `Hosted MCP authentication input: ${identity.authHeaderState}. ` +
+            (identity.authHeaderState === "malformed"
+              ? "An Authorization header reached the hosted MCP endpoint, but it was not a usable Bearer header; no credential was forwarded. "
+              : identity.authHeaderState === "absent"
+                ? "No Authorization header reached the hosted MCP endpoint on this request. Send it on every protected tool request, not only initialization. "
+                : "A usable Bearer header reached the hosted MCP endpoint. ")
+          : "";
+        const correlation = identity?.requestId && /^[a-f0-9]{8}$/.test(identity.requestId)
+          ? `MCP request ID: ${identity.requestId}. ` : "";
+        const setup = e.authReason === "identity_lookup_failed" ? "" :
+          "Configure this hosted connector with Authorization: Bearer <FetchSandbox account API key>. " +
+          "If its Bearer authentication field adds the scheme, enter only the key there. " +
+          "Use your account key from https://fetchsandbox.com/keys, not a synthetic provider credential. " +
+          "FETCHSANDBOX_API_KEY is a local process environment variable, not a hosted HTTP authentication header. ";
         throw new ToolError(
-          "FetchSandbox needs a free API key for this step. Ask the user to " +
-          "open https://fetchsandbox.com/keys, sign in with Google or GitHub, " +
-          "click 'Create a key', and paste the key that appears into this " +
-          "connector's authentication field (as a bearer token). Everything " +
-          "already run so far — the sandbox and any failure scenario — keeps " +
-          "working; only this step needs the key.",
-          401,
+          diagnosis + ingress + correlation + setup +
+          "After authentication works, if your session was created anonymously, start a fresh owned validate_integration session; an existing anonymous session cannot be upgraded by signing in. " +
+          "If your session already has an owner, retry the same owned session and run after repairing authentication; do not create a replacement attempt.",
+          401, e.authReason,
         );
       }
       throw e;
