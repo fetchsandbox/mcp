@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {startAndPoll,pollJob,withJobResponseBudget,runGetJob} from '../dist/tools/jobs.js';
+import {startAndPoll,pollJob,withJobResponseBudget,runGetJob,pendingJob} from '../dist/tools/jobs.js';
 
 // Exercise real HTTP against a controlled backend. The server counts starts:
 // a resumed job must read the existing result, never submit a second task.
@@ -9,7 +9,7 @@ test('bounded responses resume the same job, retain its evidence and isolate con
   let starts=0,reads=0,done=false;
   const srv=createServer((req,res)=>{res.setHeader('Content-Type','application/json');
     if(req.method==='POST'){starts++;res.end(JSON.stringify({job_id:'control_1',status:'running'}));}
-    else {reads++;res.end(JSON.stringify(done ? {status:'done',green_allowed:true,state:'proven',receipt_url:'https://fetchsandbox.com/runs/control',exit_codes:{buggy:1,fixed:0}} : {status:'running'}));}
+    else {reads++;res.end(JSON.stringify(done ? {status:'done',green_allowed:true,state:'proven',receipt_url:'https://fetchsandbox.com/runs/control',exit_codes:{buggy:1,fixed:0}} : {status:'running',elapsed_s:9,job_kind:'prove_fix'}));}
   });
   await new Promise(r=>srv.listen(0,'127.0.0.1',r));
   const prior=process.env.FETCHSANDBOX_BASE_URL;process.env.FETCHSANDBOX_BASE_URL=`http://127.0.0.1:${srv.address().port}`;
@@ -18,6 +18,7 @@ test('bounded responses resume the same job, retain its evidence and isolate con
     assert.equal(pending.status,'running');assert.equal(pending.job_id,'control_1');
     assert.equal(pending.next_tool_call.name,'get_job');assert.equal(pending.green_allowed,undefined);
     assert.equal(starts,1);assert.ok(reads>0);
+    assert.equal(pending.elapsed_s,9);assert.equal(pending.job_kind,'prove_fix');assert.match(pending.agent_guidance,/do not infer a timeout/);
     done=true;
     const resumed=await runGetJob(pending.job_id);
     assert.equal(resumed.state,'proven');assert.deepEqual(resumed.exit_codes,{buggy:1,fixed:0});assert.equal(starts,1);
@@ -63,4 +64,10 @@ test('the actual MCP dispatcher returns a pending proof and resumes its measured
     await client.close();await core.close();await new Promise(r=>srv.close(r));rmSync(dir,{recursive:true,force:true});
     for(const [key,value] of [['FETCHSANDBOX_BASE_URL',prior],['FETCHSANDBOX_WORKSPACE_ROOT',priorRoot],['FETCHSANDBOX_API_KEY',priorKey]]){if(value===undefined)delete process.env[key];else process.env[key]=value;}
   }
+});
+
+test('pending progress forwards only measured bounded fields',()=>{
+  for(const elapsed_s of [-1,NaN,Infinity,'999']) assert.equal(pendingJob('x',{status:'running',elapsed_s}).elapsed_s,undefined);
+  const out=pendingJob('x',{status:'running',elapsed_s:20,job_kind:'../../secret',private:'source'});
+  assert.equal(out.elapsed_s,20);assert.equal(out.job_kind,undefined);assert.equal(out.private,undefined);
 });

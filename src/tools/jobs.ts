@@ -31,11 +31,17 @@ export interface PendingJob {
   job_id: string;
   next_tool_call: { name: "get_job"; arguments: { job_id: string } };
   agent_guidance: string;
+  elapsed_s?: number;
+  job_kind?: string;
 }
-export function pendingJob(jobId: string): PendingJob {
+export function pendingJob(jobId: string, progress?: JobStatus): PendingJob {
+  const elapsed = progress?.elapsed_s;
+  const facts = typeof elapsed === "number" && Number.isFinite(elapsed) && elapsed >= 0
+    ? {elapsed_s: elapsed, ...(typeof progress?.job_kind === "string" && /^[a-z_]{1,40}$/.test(progress.job_kind) ? {job_kind: progress.job_kind} : {})} : {};
   return {status: "running", job_id: jobId,
     next_tool_call: {name: "get_job", arguments: {job_id: jobId}},
-    agent_guidance: "The SAME backend job is still running. Call get_job with this job_id until done. Do not start another job, apply the proposed fix, or claim a pass while it is running."};
+    ...facts,
+    agent_guidance: "The SAME backend job is still running. Call get_job with this job_id until done. Do not start another job, apply the proposed fix, or claim a pass while it is running. Only elapsed_s is measured elapsed time; do not infer a timeout from poll count or model estimates."};
 }
 export const getJobTool = {
   name: "get_job",
@@ -80,12 +86,14 @@ export async function pollJob(
   const intervalMs = opts?.intervalMs ?? 4000;
   const budget = Math.min(maxMs, responseBudget.getStore() ?? maxMs);
   const deadline = Date.now() + budget;
+  let progress: JobStatus | undefined;
   while (Date.now() < deadline) {
     const st = await getJson<JobStatus>(`/api/mcp/jobs/${jobId}`);
     if (st.status !== "running") return st;
+    progress = st;
     await sleep(Math.min(intervalMs, Math.max(0, deadline - Date.now())));
   }
-  if (budget < maxMs) return {...pendingJob(jobId)};
+  if (budget < maxMs) return {...pendingJob(jobId, progress)};
   throw new ToolError(
     `Timed out after ${Math.round(maxMs / 60000)}min waiting on ` +
       `${opts?.startPath ?? "job " + jobId}.`,
