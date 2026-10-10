@@ -36,6 +36,11 @@ const EXCLUDES = [
   "build",
   "coverage",
   ".DS_Store",
+  // Claude's project MCP config can contain the caller's disposable or real
+  // API key. It is client configuration, never application source.
+  ".mcp.json",
+  ".mcp.*.json",
+  "mcp.json",
 
   // AGENT INSTRUCTION FILES ARE NEVER SHIPPED.
   //
@@ -111,6 +116,7 @@ const MAX_TAR_BYTES = 40 * 1024 * 1024;
  * left silently cannot.
  */
 const SECRET_SHAPES: Array<[string, RegExp]> = [
+  ["FetchSandbox API key", /\bfsk_[A-Za-z0-9_-]{20,}\b/],
   ["AWS access key", /\bAKIA[0-9A-Z]{16}\b/],
   ["private key block", /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----/],
   ["Stripe secret key (live)", /\bsk_live_[A-Za-z0-9]{20,}/],

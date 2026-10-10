@@ -25,12 +25,24 @@ const RETRY_STATUSES = new Set([502, 503, 504]);
 const MAX_RETRIES = 1;
 const RETRY_BACKOFF_MS = 1500;
 
+const AUTH_FAILURE_REASONS = [
+  "missing_authorization", "malformed_authorization", "unsupported_bearer",
+  "account_key_unrecognized", "identity_lookup_failed",
+] as const;
+export type AuthFailureReason = typeof AUTH_FAILURE_REASONS[number];
+
 export class ToolError extends Error {
   status?: number;
-  constructor(message: string, status?: number) {
+  authReason?: AuthFailureReason;
+  constructor(message: string, status?: number, authReason?: string | null) {
     super(message);
     this.name = "ToolError";
     this.status = status;
+    // Only our bounded account-auth vocabulary may survive as metadata.
+    // Unknown headers, arbitrary errors and non-auth failures carry no reason.
+    if (status === 401 && AUTH_FAILURE_REASONS.includes(authReason as AuthFailureReason)) {
+      this.authReason = authReason as AuthFailureReason;
+    }
   }
 }
 
@@ -109,7 +121,8 @@ async function fetchWithRetry(
         continue;
       }
       // Non-retryable error — surface as ToolError immediately.
-      throw new ToolError(await readErrorMessage(res), res.status);
+      throw new ToolError(await readErrorMessage(res), res.status,
+        res.headers.get("x-fetchsandbox-auth-reason"));
     } catch (e) {
       clearTimeout(timer);
       if (e instanceof ToolError) throw e;
@@ -172,7 +185,8 @@ export async function postJsonLong<T>(
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
-    if (!res.ok) throw new ToolError(await readErrorMessage(res), res.status);
+    if (!res.ok) throw new ToolError(await readErrorMessage(res), res.status,
+      res.headers.get("x-fetchsandbox-auth-reason"));
     return (await res.json()) as T;
   } catch (e) {
     if (e instanceof ToolError) throw e;

@@ -52,6 +52,8 @@ export interface RequestIdentity {
   apiKey: string;
   /** For log correlation. Not sent upstream. */
   requestId?: string;
+  /** Bounded ingress evidence only. Never stores the raw header or scheme. */
+  authHeaderState?: "absent" | "malformed" | "bearer_present";
   /**
    * The calling platform (lovable, bolt, replit, base44, …), from Origin.
    * Sent upstream as x-mcp-client so retention can be split per platform —

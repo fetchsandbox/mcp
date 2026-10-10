@@ -34,6 +34,7 @@ interface FixBugResponse {
 export const fixBugTool = {
   name: "fix_bug",
   description:
+    "Long work returns status:running and next_tool_call:get_job within a short response. Follow that SAME job until done; never repeat this tool to poll. " +
     "FetchSandbox remediation: get a proposed fix for a specific bug in YOUR " +
     "code. The 'fix' step after find_bugs. Ships the project to the " +
     "FetchSandbox runtime, which authors a MINIMAL fix grounded in the known " +
@@ -80,6 +81,10 @@ export const fixBugTool = {
 } as const;
 
 export async function runFixBug(input: FixBugInput): Promise<{
+  status?: string;
+  job_id?: string;
+  next_tool_call?: unknown;
+  agent_guidance?: string;
   /** Typed next step from the server. Every entry point carries the exit:
    *  a finding is a hypothesis until prove_fix measures it. */
   next_actions?: unknown;
@@ -108,6 +113,7 @@ export async function runFixBug(input: FixBugInput): Promise<{
   const raw = await startAndPoll("/api/mcp/fix_bug", body, {
     maxMs: (timeout_s + 180) * 1000,
   });
+  if (raw.status === "running") return {...raw, available: false, diff: null, summary: null, engine: "fetchsandbox", packed_bytes: bytes};
   if (raw.status === "error") {
     throw new ToolError(`FetchSandbox remediation failed: ${raw.error ?? "unknown error"}`);
   }

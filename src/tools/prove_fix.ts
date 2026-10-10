@@ -28,6 +28,7 @@ export interface ProveFixInput {
 export const proveFixTool = {
   name: "prove_fix",
   description:
+    "Long work returns status:running and next_tool_call:get_job within a short response. Follow that SAME job until done; never repeat this tool to poll. " +
     "THE PROOF STEP. The only way to establish that a fix actually works, and " +
     "the only thing that produces a shareable receipt. " +
     "Ship the STILL-BUGGY project plus your proposed diff: FetchSandbox applies " +
@@ -88,6 +89,9 @@ export const proveFixTool = {
 } as const;
 
 export async function runProveFix(input: ProveFixInput): Promise<{
+  status?: string;
+  job_id?: string;
+  next_tool_call?: unknown;
   green_allowed: boolean;
   state?: string;
   reproduced?: boolean;
@@ -145,6 +149,7 @@ export async function runProveFix(input: ProveFixInput): Promise<{
     // (~5 min) + two probe runs (buggy + fixed). Returns as soon as it's done.
     maxMs: (timeout_s * 3 + 360) * 1000,
   });
+  if (raw.status === "running") return {...raw, green_allowed: false, state: "running", engine: "fetchsandbox"};
   if (raw.status === "error") {
     throw new ToolError(`FetchSandbox prove failed: ${raw.error ?? "unknown error"}`);
   }

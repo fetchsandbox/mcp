@@ -35,6 +35,9 @@ interface BackendProbe {
 }
 
 interface BackendVerifyResponse {
+  job_id?: string;
+  next_tool_call?: unknown;
+  agent_guidance?: string;
   /** Typed next step from the server. Every entry point carries the exit:
    *  a finding is a hypothesis until prove_fix measures it. */
   next_actions?: unknown;
@@ -70,6 +73,10 @@ interface BackendVerifyResponse {
 }
 
 export interface NormalizedVerifyResult {
+  status?: string;
+  job_id?: string;
+  next_tool_call?: unknown;
+  agent_guidance?: string;
   /** Typed next step from the server. Every entry point carries the exit:
    *  a finding is a hypothesis until prove_fix measures it. */
   next_actions?: unknown;
@@ -201,6 +208,7 @@ export async function runVerifyBehavior(
         })
       : start
   ) as unknown as BackendVerifyResponse;
+  if (raw.status === "running") return {status: raw.status, job_id: raw.job_id, next_tool_call: raw.next_tool_call, agent_guidance: raw.agent_guidance, confirmed: false, app_verified: false, evidence_scope: "reference_handlers", probes: []};
   return normalizeVerifyResult(raw);
 }
 

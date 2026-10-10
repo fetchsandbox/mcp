@@ -14,6 +14,7 @@
 // dropped in the dispatch layer (0.3.6) and forced the happy path.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -21,15 +22,19 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 // ── Backend interception ────────────────────────────────────────────────
 const httpCalls = [];
 const realFetch = globalThis.fetch;
+// Read-only live catalog capture, narrowed to two complete workflows. Request
+// bodies and template bindings are provider-produced data, not invented mocks.
+const resendCatalog = JSON.parse(readFileSync(new URL("./fixtures/list_workflows-resend-2026-10-09.json", import.meta.url), "utf8"));
 let receiptJobRunning = false;
 let receiptStatusRunning = false;
 let receiptOversized = false;
 
 function cannedBackendResponse(path) {
+  if (path === "/api/specs/resend/workflows") return resendCatalog;
   if (path.endsWith("/api/mcp/validate_integration")) {
     const body = httpCalls.at(-1)?.body;
     if (body?.execute) return {job_id: "receipt_job", status: "running"};
-    if (body?.providers?.length) return {step: "handover", next_action: "inspect_app_then_configure_receipt_suite",
+    if (body?.providers?.length) return {session_id: "vs_test", step: "handover", next_action: "inspect_app_then_configure_receipt_suite",
       next_tool_call: null, missing_configuration: ["webhook_url"], legs: {paddle: {base_url: "https://twin.test"}},
       application_setup_policy: {replit_private_development_url: {steps: ["restore privacy"]}}};
     if (body?.suite) return {step: "configure_app", next_action: "configure_app_then_execute",
@@ -37,6 +42,14 @@ function cannedBackendResponse(path) {
     if (receiptStatusRunning) return {status: "running", run_id: "vr_receipt", suite: "receipt_recovery_v1",
       execution_progress: {case: "sink_timeout", stage: "first", phase: "delivering", checkpoints_recorded: 18, checkpoints_expected: 33}};
     return {};
+  }
+  if (path === "/api/specs/stripe/workflows") {
+    // Catalog shape read from the published endpoint on 2026-10-09. The
+    // cross-service descriptor is produced by the existing backend
+    // _cross_service_for_spec helper, pinned in test_mcp_multiservice.py.
+    return {workflows: [{id: "accept_payment", name: "Accept a payment", steps: [{method: "POST"}]}],
+      scenarios: [], cross_service_available: [{workflow: "charge_then_notify", services: ["stripe", "twilio"],
+        run_with: "quickrun(spec_slug='_workflows', workflow_name='charge_then_notify')"}]};
   }
   if (path.endsWith("/api/mcp/jobs/receipt_job")) {
     if (receiptJobRunning) return {status: "running"};
@@ -199,6 +212,109 @@ test("hosted validation directs agents to the recommended app suite before refer
   assert.match(tool.description, /transaction creation alone is not payment proof/i);
 });
 
+test("initial application planning gets an actionable session-first recovery through MCP", async () => {
+  httpCalls.length = 0;
+  const application_context = {goal: "Notify a fictional customer after a deposit", workflow: "Saved inactive workflow"};
+  const rejected = await client.callTool({name: "validate_integration", arguments: {
+    providers: ["stripe", "twilio"], application_context,
+  }});
+  assert.equal(rejected.isError, true);
+  const error = rejected.content.map(row => row.text ?? "").join(" ");
+  assert.match(error, /application_context.*existing.*session_id/);
+  assert.match(error, /without application_context.*same application_context.*returned session_id/);
+  assert.doesNotMatch(error, /arming or evaluating a probe/);
+  assert.equal(httpCalls.length, 0, "rejected planning must not mint a session behind the caller");
+
+  const started = await client.callTool({name: "validate_integration", arguments: {providers: ["stripe", "twilio"]}});
+  const session = JSON.parse(started.content[0].text);
+  const planned = await client.callTool({name: "validate_integration", arguments: {session_id: session.session_id, application_context}});
+  assert.notEqual(planned.isError, true);
+  assert.equal(httpCalls.length, 2);
+  assert.equal(httpCalls[1].body.session_id, "vs_test");
+  assert.deepEqual(httpCalls[1].body.application_context, application_context);
+  assert.deepEqual(httpCalls[1].body.providers, []);
+});
+
+test("setup actions name their own required session and configured attempt", async () => {
+  for (const [args, expected] of [
+    [{fixtures: {id: "catalog", steps: []}}, /fixtures.*existing.*session_id/],
+    [{execute: true}, /execute.*preflight.*session_id.*suite configuration/],
+    [{preflight: true, session_id: "vs_test"}, /run_id.*suite configuration/],
+  ]) {
+    httpCalls.length = 0;
+    const rejected = await client.callTool({name: "validate_integration", arguments: args});
+    assert.equal(rejected.isError, true);
+    assert.match(rejected.content.map(row => row.text ?? "").join(" "), expected);
+    assert.equal(httpCalls.length, 0);
+  }
+});
+
+test("validation discovery distinguishes caller execution from hosted HTTP suite setup", async () => {
+  const {tools} = await client.listTools();
+  const tool = tools.find(t => t.name === "validate_integration");
+  assert.match(tool.description, /arm\/probe path does not require a published app or webhook/);
+  assert.match(tool.description, /execute the actual workflow entry point/);
+  assert.match(tool.description, /Provider traffic alone remains app_verified:false/);
+  assert.match(tool.description, /public origin is required when FetchSandbox must drive or observe an HTTP application suite/);
+  assert.match(tool.inputSchema.properties.application_context.description, /start with providers first/);
+  assert.match(tool.inputSchema.properties.app_base_url.description, /Optional.*executed by the builder/);
+});
+
+test("workflow discovery preserves the canonical cross-provider invocation through MCP", async () => {
+  httpCalls.length = 0;
+  const response = await client.callTool({name: "list_workflows", arguments: {spec_slug: "stripe"}});
+  assert.notEqual(response.isError, true);
+  const payload = JSON.parse(response.content[0].text);
+  assert.equal(httpCalls[0].path, "/api/specs/stripe/workflows");
+  assert.equal(payload.workflows[0].steps_count, 1);
+  assert.deepEqual(payload.cross_service_available, [{workflow: "charge_then_notify", services: ["stripe", "twilio"],
+    run_with: "quickrun(spec_slug='_workflows', workflow_name='charge_then_notify')"}]);
+  const {tools} = await client.listTools();
+  assert.match(tools.find(t => t.name === "list_workflows").description, /exact run_with invocation/);
+});
+
+test("workflow detail filters the real catalog and preserves its full definition without execution", async () => {
+  const recorded = resendCatalog.workflows.find(w => w.id === "send_email");
+  const original = JSON.stringify(resendCatalog);
+  for (const workflow_name of [recorded.id, recorded.name]) {
+    httpCalls.length = 0;
+    const response = await client.callTool({name: "list_workflows", arguments: {spec_slug: "resend", workflow_name}});
+    assert.notEqual(response.isError, true);
+    const payload = JSON.parse(response.content[0].text);
+    assert.equal(payload.workflows.length, 1);
+    assert.equal(payload.workflows[0].id, recorded.id);
+    assert.deepEqual(payload.workflows[0], {...recorded, steps_count: recorded.steps.length});
+    assert.deepEqual(payload.workflows[0].steps, recorded.steps);
+    for (const field of ["outcome", "required_effects", "forbidden_effects", "invariants", "failure_scenario"]) {
+      assert.ok(field in recorded, `live capture must exercise ${field} preservation`);
+      assert.deepEqual(payload.workflows[0][field], recorded[field]);
+    }
+    assert.equal(payload.workflows[0].steps[0].body.subject, "Welcome to Acme");
+    assert.equal(payload.workflows[0].steps[1].path, "/emails/{{prev.id}}");
+    assert.deepEqual(httpCalls, [{method: "GET", path: "/api/specs/resend/workflows", body: null}]);
+  }
+  assert.equal(JSON.stringify(resendCatalog), original);
+  const summary = await client.callTool({name: "list_workflows", arguments: {spec_slug: "resend"}});
+  const payload = JSON.parse(summary.content[0].text);
+  assert.equal(payload.workflows.length, 2);
+  assert.ok(payload.workflows.every(w => !("steps" in w)), "unfiltered calls must remain summaries");
+  assert.ok(payload.workflows.every(w => !("invariants" in w) && !("required_effects" in w)), "unfiltered calls must not expand verification rules");
+});
+
+test("unknown workflow detail names fail with the actual available catalog", async () => {
+  for (const workflow_name of ["send", "", "charge_then_notify"]) {
+    httpCalls.length = 0;
+    const response = await client.callTool({name: "list_workflows", arguments: {spec_slug: "resend", workflow_name}});
+    assert.equal(response.isError, true);
+    const error = response.content.map(row => row.text ?? "").join(" ");
+    assert.match(error, /No workflow exactly matches/);
+    assert.match(error, /send_email/);
+    assert.match(error, /manage_contacts/);
+    assert.match(error, /run_with/);
+    assert.deepEqual(httpCalls, [{method: "GET", path: "/api/specs/resend/workflows", body: null}]);
+  }
+});
+
 test("invalid validation actions never reach the backend", async () => {
   for (const args of [{ arm: "p" }, { probe: "p" }, { session_id: "vs_test", arm: "p", probe: "p" },
     { session_id: "vs_test", probe: "p" }, { session_id: "vs_test", cancel: true },
@@ -209,6 +325,17 @@ test("invalid validation actions never reach the backend", async () => {
     assert.equal(res.isError, true);
     assert.equal(httpCalls.length, 0);
   }
+});
+
+test("application preflight reaches backend through the actual MCP dispatcher", async () => {
+  httpCalls.length=0;
+  const response=await client.callTool({name:"validate_integration",arguments:{session_id:"vs_test",run_id:"vr_test",preflight:true}});
+  assert.notEqual(response.isError,true);
+  const call=httpCalls.find(c=>c.path==="/api/mcp/validate_integration");
+  assert.equal(call.body.preflight,true);
+  assert.equal(call.body.execute,false);
+  assert.equal(call.body.run_id,"vr_test");
+  assert.equal(httpCalls.length,1);
 });
 
 test("validation cancellation forwards the exact attempt ID", async () => {
@@ -282,7 +409,12 @@ test("running receipt job returns promptly and directs status retrieval without 
     assert.equal(result.app_verified, false);
     assert.equal(result.run_id, "vr_receipt");
     assert.equal(result.retry_after_seconds, 10);
-    assert.deepEqual(result.next_tool_call, {tool: "validate_integration", arguments: {session_id: "vs_receipt"}});
+    assert.equal(result.coordination_guidance.execution.mode, "existing_backend_job");
+    assert.equal(result.coordination_guidance.execution.additional_background_helper_required, false);
+    assert.equal(result.coordination_guidance.owner_browser_handoff.confirmation, "one_native_question");
+    assert.match(result.coordination_guidance.owner_browser_handoff.instruction, /independently verify paid state/);
+    assert.equal(httpCalls.filter(c => c.body?.execute)[0].body.async_job, true);
+    assert.deepEqual(result.next_tool_call, {tool: "validate_integration", arguments: {session_id: "vs_receipt", run_id: "vr_receipt"}});
     assert.match(result.message_for_user, /Do not send execute again/);
     assert.equal(httpCalls.filter(c => c.path.endsWith('/jobs/receipt_job')).length, 1);
     assert.equal(httpCalls.filter(c => c.body?.execute).length, 1);
@@ -311,6 +443,8 @@ test("hosted MCP preserves staged handoffs and does not advertise premature exec
   const started = JSON.parse(start.content[0].text);
   assert.equal(started.next_action, "inspect_app_then_configure_receipt_suite");
   assert.equal(started.next_tool_call, null);
+  assert.equal(started.coordination_guidance.execution.additional_background_helper_required, false);
+  assert.match(started.coordination_guidance.owner_browser_handoff.instruction, /Pause for its answer/);
   assert.deepEqual(started.missing_configuration, ["webhook_url"]);
   assert.ok(started.application_setup_policy.replit_private_development_url);
 

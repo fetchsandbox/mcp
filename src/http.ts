@@ -104,6 +104,8 @@ function callerPlatform(req: IncomingMessage): string {
   for (const [needle, name] of [
     ["lovable", "lovable"], ["bolt.new", "bolt"], ["stackblitz", "bolt"],
     ["replit", "replit"], ["base44", "base44"], ["n8n", "n8n"],
+    // Attribution only; platform classification never grants authentication.
+    ["tasklet", "tasklet"],
     ["claude", "claude"], ["cursor", "cursor"], ["openai", "chatgpt"],
   ] as const) {
     if (hay.includes(needle)) return name;
@@ -179,6 +181,12 @@ function bearerOf(req: IncomingMessage): string {
   return scheme?.toLowerCase() === "bearer" ? rest.join(" ").trim() : "";
 }
 
+/** Keep missing and unusable input distinct without recording credentials. */
+function authHeaderState(req: IncomingMessage): "absent" | "malformed" | "bearer_present" {
+  if (req.headers.authorization === undefined) return "absent";
+  return bearerOf(req) ? "bearer_present" : "malformed";
+}
+
 async function handleMcp(req: IncomingMessage, res: ServerResponse, reqId: string) {
   const server = createServer();
   registerHandlers(server);
@@ -196,6 +204,7 @@ async function handleMcp(req: IncomingMessage, res: ServerResponse, reqId: strin
     {
       apiKey: bearerOf(req),
       requestId: reqId,
+      authHeaderState: authHeaderState(req),
       platform: callerPlatform(req),
       // The caller's literal Origin. Recorded, never matched against a list.
       rawOrigin: String(req.headers.origin || ""),
@@ -208,6 +217,7 @@ async function main() {
   const http = createHttpServer(async (req, res) => {
     const started = Date.now();
     const reqId = randomUUID().slice(0, 8);
+    res.setHeader("X-FetchSandbox-MCP-Request-Id", reqId);
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
     // ONE LINE PER REQUEST, to stderr.
@@ -221,7 +231,7 @@ async function main() {
       process.stderr.write(
         `[mcp-http] id=${reqId} ${req.method} ${url.pathname} ` +
         `status=${status} ms=${Date.now() - started} ` +
-        `client=${callerPlatform(req)}${note ? " " + note : ""}\n`,
+        `client=${callerPlatform(req)} auth_header=${authHeaderState(req)}${note ? " " + note : ""}\n`,
       );
     };
     res.on("finish", () => done(res.statusCode));
