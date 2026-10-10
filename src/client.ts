@@ -104,6 +104,7 @@ async function fetchWithRetry(
   init: RequestInit,
   method: "GET" | "POST",
   path: string,
+  requestSignal?: AbortSignal,
 ): Promise<Response> {
   let lastErr: unknown;
   let lastStatus: number | null = null;
@@ -111,13 +112,13 @@ async function fetchWithRetry(
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const res = await fetch(url, { ...init, signal: ctrl.signal });
+      const res = await fetch(url, { ...init, signal: requestSignal ?? ctrl.signal });
       clearTimeout(timer);
       if (res.ok) return res;
       // Retry on transient upstream errors only.
       if (RETRY_STATUSES.has(res.status) && attempt < MAX_RETRIES) {
         lastStatus = res.status;
-        await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS));
+        await retryPause(RETRY_BACKOFF_MS, requestSignal);
         continue;
       }
       // Non-retryable error — surface as ToolError immediately.
@@ -125,13 +126,14 @@ async function fetchWithRetry(
         res.headers.get("x-fetchsandbox-auth-reason"));
     } catch (e) {
       clearTimeout(timer);
+      if (requestSignal?.aborted) throw e;
       if (e instanceof ToolError) throw e;
       lastErr = e;
       const errName = (e as Error).name;
       const isAbort = errName === "AbortError";
       // Retry network-level failures (DNS, ECONNRESET, timeouts)
       if (attempt < MAX_RETRIES && (isAbort || errName === "TypeError" || errName === "FetchError")) {
-        await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS));
+        await retryPause(RETRY_BACKOFF_MS, requestSignal);
         continue;
       }
       if (isAbort) {
@@ -201,8 +203,41 @@ export async function postJsonLong<T>(
   }
 }
 
-export async function getJson<T>(path: string): Promise<T> {
+function retryPause(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const cancel = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", cancel);
+      reject(new ToolError("Request cancelled during retry wait"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", cancel);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", cancel, {once: true});
+    if (signal?.aborted) cancel();
+  });
+}
+
+export async function getJson<T>(path: string, opts?: {timeoutMs: number}): Promise<T> {
   const url = `${getBaseUrl()}${path}`;
+  if (opts) {
+    // One deadline covers headers, response body and retry backoff. A fetch
+    // timer cleared at the headers cannot bound a stalled JSON body.
+    const timeoutMs = Math.max(1, Math.min(REQUEST_TIMEOUT_MS, opts.timeoutMs));
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetchWithRetry(url, {headers: buildHeaders()}, "GET", path, ctrl.signal);
+      return await res.json() as T;
+    } catch (error) {
+      if (ctrl.signal.aborted) throw new ToolError(`Request timed out after ${timeoutMs}ms: GET ${path}`);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      ctrl.abort();
+    }
+  }
   const res = await fetchWithRetry(url, { headers: buildHeaders() }, "GET", path);
   return (await res.json()) as T;
 }

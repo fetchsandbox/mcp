@@ -14,7 +14,7 @@ test('bounded responses resume the same job, retain its evidence and isolate con
   await new Promise(r=>srv.listen(0,'127.0.0.1',r));
   const prior=process.env.FETCHSANDBOX_BASE_URL;process.env.FETCHSANDBOX_BASE_URL=`http://127.0.0.1:${srv.address().port}`;
   try {
-    const pending=await withJobResponseBudget(15,()=>startAndPoll('/api/mcp/prove_fix',{}, {maxMs:1000,intervalMs:1}));
+    const pending=await withJobResponseBudget(100,()=>startAndPoll('/api/mcp/prove_fix',{}, {maxMs:1000,intervalMs:1}));
     assert.equal(pending.status,'running');assert.equal(pending.job_id,'control_1');
     assert.equal(pending.next_tool_call.name,'get_job');assert.equal(pending.green_allowed,undefined);
     assert.equal(starts,1);assert.ok(reads>0);
@@ -70,4 +70,54 @@ test('pending progress forwards only measured bounded fields',()=>{
   for(const elapsed_s of [-1,NaN,Infinity,'999']) assert.equal(pendingJob('x',{status:'running',elapsed_s}).elapsed_s,undefined);
   const out=pendingJob('x',{status:'running',elapsed_s:20,job_kind:'../../secret',private:'source'});
   assert.equal(out.elapsed_s,20);assert.equal(out.job_kind,undefined);assert.equal(out.private,undefined);
+});
+
+test('stalled response bodies and retry waits cannot exceed a bounded poll',async()=>{
+  let mode='body',reads=0;
+  const srv=createServer((req,res)=>{reads++;
+    if(mode==='backoff'){res.writeHead(503);res.end('retry later');return;}
+    res.writeHead(200,{'Content-Type':'application/json'});res.write('{"status":');
+  });
+  await new Promise(r=>srv.listen(0,'127.0.0.1',r));
+  const prior=process.env.FETCHSANDBOX_BASE_URL;process.env.FETCHSANDBOX_BASE_URL=`http://127.0.0.1:${srv.address().port}`;
+  try{
+    for(mode of ['body','backoff']){
+      const start=Date.now();
+      const outcome=await withJobResponseBudget(40,()=>pollJob('same_job',{maxMs:1000,intervalMs:1}));
+      assert.equal(outcome.status,'running');assert.equal(outcome.job_id,'same_job');
+      assert.equal(outcome.poll_read_timed_out,true);assert.equal(outcome.green_allowed,undefined);
+      assert.ok(Date.now()-start<500,mode+' ignored the response deadline');
+    }
+    assert.equal(reads,2,'deadline must not submit a new job or restart a delayed read');
+  }finally{
+    if(prior===undefined)delete process.env.FETCHSANDBOX_BASE_URL;else process.env.FETCHSANDBOX_BASE_URL=prior;
+    srv.closeAllConnections();await new Promise(r=>srv.close(r));
+  }
+});
+
+test('an ambiguous job-start failure is not automatically resubmitted',async()=>{
+  let starts=0;
+  const srv=createServer((req,res)=>{starts++;res.writeHead(502);res.end('start response lost');});
+  await new Promise(r=>srv.listen(0,'127.0.0.1',r));
+  const prior=process.env.FETCHSANDBOX_BASE_URL;process.env.FETCHSANDBOX_BASE_URL=`http://127.0.0.1:${srv.address().port}`;
+  try{
+    await assert.rejects(()=>withJobResponseBudget(40,()=>startAndPoll('/api/mcp/prove_fix',{})),/do not automatically resubmit/);
+    assert.equal(starts,1);
+  }finally{if(prior===undefined)delete process.env.FETCHSANDBOX_BASE_URL;else process.env.FETCHSANDBOX_BASE_URL=prior;await new Promise(r=>srv.close(r));}
+});
+
+test('starting and polling share one response deadline',async()=>{
+  let starts=0;
+  const srv=createServer((req,res)=>{res.setHeader('Content-Type','application/json');
+    if(req.method==='POST'){starts++;setTimeout(()=>res.end(JSON.stringify({job_id:'same_deadline',status:'running'})),80);}
+    else res.end(JSON.stringify({status:'running'}));
+  });
+  await new Promise(r=>srv.listen(0,'127.0.0.1',r));
+  const prior=process.env.FETCHSANDBOX_BASE_URL;process.env.FETCHSANDBOX_BASE_URL=`http://127.0.0.1:${srv.address().port}`;
+  try{
+    const start=Date.now();
+    const outcome=await withJobResponseBudget(100,()=>startAndPoll('/api/mcp/prove_fix',{}, {maxMs:1000,intervalMs:1}));
+    assert.equal(outcome.job_id,'same_deadline');assert.equal(starts,1);
+    assert.ok(Date.now()-start<150,'polling reset the response budget after the start');
+  }finally{if(prior===undefined)delete process.env.FETCHSANDBOX_BASE_URL;else process.env.FETCHSANDBOX_BASE_URL=prior;await new Promise(r=>srv.close(r));}
 });
