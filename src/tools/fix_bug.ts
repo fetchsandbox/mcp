@@ -5,11 +5,11 @@
  * ships the project to the FetchSandbox runtime, which authors a MINIMAL fix —
  * grounded by the brain's remediation pattern for that failure class — and
  * returns a `git diff` PROPOSAL. The user's working tree is never modified; the
- * agent reviews the diff and applies it.
+ * agent reviews the diff, proves it against the still-buggy project, then applies it.
  *
- * Calls POST /api/mcp/fix_bug. The diff is NOT a proof — after applying it,
- * prove the fix with submit_proof / verify_behavior so the receipt can claim a
- * measured buggy→fixed flip. FetchSandbox proposes; the gate certifies.
+ * Calls POST /api/mcp/fix_bug. The diff is NOT a proof. Before applying it,
+ * call prove_fix so both the original and candidate execute under the same
+ * failure probe. FetchSandbox proposes; recorded execution determines the verdict.
  */
 import { ToolError } from "../client.js";
 import { startAndPoll } from "./jobs.js";
@@ -34,14 +34,16 @@ interface FixBugResponse {
 export const fixBugTool = {
   name: "fix_bug",
   description:
+    "Long work returns status:running and next_tool_call:get_job within a short response. Follow that SAME job until done; never repeat this tool to poll. " +
     "FetchSandbox remediation: get a proposed fix for a specific bug in YOUR " +
     "code. The 'fix' step after find_bugs. Ships the project to the " +
     "FetchSandbox runtime, which authors a MINIMAL fix grounded in the known " +
     "remediation for that failure class and returns a git diff — it does NOT " +
-    "modify your files, so review the diff and apply it yourself. IMPORTANT: " +
-    "the diff is a proposal, not a proof. After applying it, prove the fix " +
-    "(submit_proof / verify_behavior) so the buggy→fixed flip is measured, not " +
-    "assumed. Runs for up to a few minutes.",
+    "modify your files. Review the diff, then call prove_fix with the diff " +
+    "and the STILL-BUGGY project BEFORE applying it. Apply the patch only " +
+    "after inspecting that result. The diff is a proposal, not a proof; " +
+    "quickrun and verify_behavior on reference handlers do not prove this " +
+    "change on your application. Runs for up to a few minutes.",
   inputSchema: {
     type: "object",
     properties: {
@@ -80,6 +82,10 @@ export const fixBugTool = {
 } as const;
 
 export async function runFixBug(input: FixBugInput): Promise<{
+  status?: string;
+  job_id?: string;
+  next_tool_call?: unknown;
+  agent_guidance?: string;
   /** Typed next step from the server. Every entry point carries the exit:
    *  a finding is a hypothesis until prove_fix measures it. */
   next_actions?: unknown;
@@ -108,6 +114,7 @@ export async function runFixBug(input: FixBugInput): Promise<{
   const raw = await startAndPoll("/api/mcp/fix_bug", body, {
     maxMs: (timeout_s + 180) * 1000,
   });
+  if (raw.status === "running") return {...raw, available: false, diff: null, summary: null, engine: "fetchsandbox", packed_bytes: bytes};
   if (raw.status === "error") {
     throw new ToolError(`FetchSandbox remediation failed: ${raw.error ?? "unknown error"}`);
   }

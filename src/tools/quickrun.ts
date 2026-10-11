@@ -67,15 +67,18 @@ export interface NormalizedQuickrunResult {
 export const quickrunTool = {
   name: "quickrun",
   description:
-    "Run a curated proof workflow against a KNOWN, bundled spec (stripe, clerk, " +
+    "Run a curated reference workflow against a KNOWN, bundled spec (stripe, clerk, " +
     "descope, resend, twilio, and 50+ others) in ONE call — it spins up the " +
     "sandbox by slug, so you do NOT need import_spec or a sandbox_id first. " +
-    "This is the normal path when the user is testing an integration with a " +
-    "well-known provider: call `guide` on their prompt, then call `quickrun` " +
+    "Use this when exploring the bundled provider contract: call `guide` " +
+    "on their prompt, then call `quickrun` " +
     "with the returned spec + workflow. To reproduce a failure, pass the " +
     "`scenario` from guide's matched_bug_pattern.reproduce_with.scenario (e.g. " +
     "webhook_retries, payment_declined). Returns sandbox_id + flow_run_id — pass " +
-    "BOTH to verify_behavior to prove the fix — plus a receipt URL. Use " +
+    "BOTH to verify_behavior to inspect the reference behavior — plus a receipt URL. " +
+    "This does not execute or prove the caller's application. For a bug in " +
+    "their project, use find_bugs, fix_bug and prove_fix on that project; " +
+    "do not substitute this reference receipt for an own-code proof. Use " +
     "run_workflow instead ONLY when you already hold a sandbox_id from " +
     "import_spec of a custom/private spec.",
   inputSchema: {

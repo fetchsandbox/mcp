@@ -1,0 +1,203 @@
+{
+  "workflows": [
+    {
+      "id": "send_email",
+      "name": "Send a transactional email",
+      "description": "Send an email, then retrieve its status to confirm delivery",
+      "_meta": {
+        "source_type": "curated"
+      },
+      "webhook_events": [
+        "email.sent",
+        "email.delivered"
+      ],
+      "failure_scenario": "rate_limited",
+      "steps": [
+        {
+          "name": "Send email",
+          "description": "Send a transactional email to a customer",
+          "method": "POST",
+          "path": "/emails",
+          "body": {
+            "from": "onboarding@acme.com",
+            "to": [
+              "dev@example.com"
+            ],
+            "subject": "Welcome to Acme",
+            "html": "<h1>Welcome!</h1><p>Thanks for signing up.</p>"
+          },
+          "expect_status": 200
+        },
+        {
+          "name": "Get email status",
+          "description": "Retrieve the sent email to check delivery status",
+          "method": "GET",
+          "path": "/emails/{{prev.id}}",
+          "expect_status": 200
+        }
+      ],
+      "outcome": {
+        "resource": "emails",
+        "terminal_state": {
+          "one_of": [
+            "delivered",
+            "sent"
+          ]
+        },
+        "contract_fields": [
+          "id",
+          "from",
+          "subject"
+        ]
+      },
+      "constraints": [],
+      "required_effects": [
+        {
+          "webhook": "email.sent"
+        },
+        {
+          "webhook": "email.delivered"
+        }
+      ],
+      "forbidden_effects": [
+        {
+          "webhook": "email.bounced"
+        }
+      ],
+      "invariants": [
+        {
+          "category": "referential",
+          "name": "email ID preserved",
+          "rule": "id == id"
+        }
+      ]
+    },
+    {
+      "id": "manage_contacts",
+      "name": "Create audience and add contacts",
+      "description": "Set up an audience, add contacts to it, then list them",
+      "_meta": {
+        "source_type": "curated"
+      },
+      "webhook_events": [
+        "contact.created"
+      ],
+      "failure_scenario": "rate_limited",
+      "steps": [
+        {
+          "name": "Create audience",
+          "description": "Create a mailing list audience",
+          "method": "POST",
+          "path": "/audiences",
+          "body": {
+            "name": "Product Updates"
+          },
+          "expect_status": 200
+        },
+        {
+          "name": "Add contact",
+          "description": "Add a subscriber to the audience",
+          "method": "POST",
+          "path": "/contacts",
+          "body": {
+            "audience_id": "{{prev.id}}",
+            "email": "subscriber@example.com",
+            "first_name": "Jane",
+            "last_name": "Doe"
+          },
+          "expect_status": 200
+        },
+        {
+          "name": "List contacts",
+          "description": "Retrieve all contacts in the audience",
+          "method": "GET",
+          "path": "/contacts",
+          "expect_status": 200
+        }
+      ],
+      "outcome": {
+        "resource": "contacts",
+        "terminal_state": {
+          "kind": "webhook_effect",
+          "one_of": [
+            "contact.created"
+          ]
+        },
+        "contract_fields": [
+          "id"
+        ]
+      },
+      "constraints": [
+        {
+          "type": "webhook_effect",
+          "name": "contacts emitted terminal webhook",
+          "check": "one_of",
+          "values": [
+            "contact.created"
+          ]
+        }
+      ],
+      "required_effects": [
+        {
+          "webhook": "contact.created",
+          "consistent_with": "resource"
+        }
+      ],
+      "forbidden_effects": [],
+      "invariants": [
+        {
+          "category": "referential",
+          "name": "contact ID preserved",
+          "rule": "id == id"
+        }
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "recovery_rate_limited",
+      "description": "Controlled single rejection followed by recovery; documentation-based error envelope, not measured live outage parity.",
+      "how_to_run": "pass scenario='recovery_rate_limited' to quickrun or run_workflow"
+    },
+    {
+      "id": "recovery_server_error",
+      "description": "Controlled single rejection followed by recovery; documentation-based error envelope, not measured live outage parity.",
+      "how_to_run": "pass scenario='recovery_server_error' to quickrun or run_workflow"
+    },
+    {
+      "id": "recovery_timeout",
+      "description": "Hold one controlled error response for 15 seconds. This exceeds the 12-second provider-request deadline observed in the Replit receipt test and remains inside FetchSandbox's 20-second outer webhook deadline. Score recovery only when the app webhook fails and redelivery starts before the twin releases the response; a later 503 alone is not timeout proof. Apps with longer provider-request deadlines need a longer fault hold.",
+      "how_to_run": "pass scenario='recovery_timeout' to quickrun or run_workflow"
+    },
+    {
+      "id": "accepted_response_loss",
+      "description": "Accept the email, then withhold its HTTP response for 15 seconds. Observe whether a Replit-style 12-second provider request timeout causes the app to retry safely.",
+      "how_to_run": "pass scenario='accepted_response_loss' to quickrun or run_workflow"
+    },
+    {
+      "id": "email_bounced",
+      "description": "The address hard-bounces. Resend accepts the send, then reports it was never delivered \u2014 your handler must suppress the address, not just log a 200.",
+      "how_to_run": "pass scenario='email_bounced' to quickrun or run_workflow"
+    },
+    {
+      "id": "recipient_complained",
+      "description": "The recipient marks the email as spam. Keep sending to them and your domain reputation suffers.",
+      "how_to_run": "pass scenario='recipient_complained' to quickrun or run_workflow"
+    },
+    {
+      "id": "domain_unverified",
+      "description": "Your sending domain has not finished DNS verification, so Resend refuses the send. This is a sender problem, not a bad recipient.",
+      "how_to_run": "pass scenario='domain_unverified' to quickrun or run_workflow"
+    },
+    {
+      "id": "auth_failure",
+      "description": "The API key is rejected. A permanent failure \u2014 retrying will never succeed and only burns quota.",
+      "how_to_run": "pass scenario='auth_failure' to quickrun or run_workflow"
+    },
+    {
+      "id": "webhook_duplicate_delivery",
+      "description": "Resend delivers the same webhook more than once. Every event arrives 3 times with the same svix-id \u2014 if your handler suppresses or records on each delivery instead of de-duplicating, you do the work three times.",
+      "how_to_run": "pass scenario='webhook_duplicate_delivery' to quickrun or run_workflow"
+    }
+  ]
+}

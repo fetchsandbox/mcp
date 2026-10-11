@@ -1,0 +1,123 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {startAndPoll,pollJob,withJobResponseBudget,runGetJob,pendingJob} from '../dist/tools/jobs.js';
+
+// Exercise real HTTP against a controlled backend. The server counts starts:
+// a resumed job must read the existing result, never submit a second task.
+test('bounded responses resume the same job, retain its evidence and isolate concurrent calls', async () => {
+  let starts=0,reads=0,done=false;
+  const srv=createServer((req,res)=>{res.setHeader('Content-Type','application/json');
+    if(req.method==='POST'){starts++;res.end(JSON.stringify({job_id:'control_1',status:'running'}));}
+    else {reads++;res.end(JSON.stringify(done ? {status:'done',green_allowed:true,state:'proven',receipt_url:'https://fetchsandbox.com/runs/control',exit_codes:{buggy:1,fixed:0}} : {status:'running',elapsed_s:9,job_kind:'prove_fix'}));}
+  });
+  await new Promise(r=>srv.listen(0,'127.0.0.1',r));
+  const prior=process.env.FETCHSANDBOX_BASE_URL;process.env.FETCHSANDBOX_BASE_URL=`http://127.0.0.1:${srv.address().port}`;
+  try {
+    const pending=await withJobResponseBudget(100,()=>startAndPoll('/api/mcp/prove_fix',{}, {maxMs:1000,intervalMs:1}));
+    assert.equal(pending.status,'running');assert.equal(pending.job_id,'control_1');
+    assert.equal(pending.next_tool_call.name,'get_job');assert.equal(pending.green_allowed,undefined);
+    assert.equal(starts,1);assert.ok(reads>0);
+    assert.equal(pending.elapsed_s,9);assert.equal(pending.job_kind,'prove_fix');assert.match(pending.agent_guidance,/do not infer a timeout/);
+    done=true;
+    const resumed=await runGetJob(pending.job_id);
+    assert.equal(resumed.state,'proven');assert.deepEqual(resumed.exit_codes,{buggy:1,fixed:0});assert.equal(starts,1);
+    done=false;
+    const separate=await Promise.all([
+      withJobResponseBudget(5,()=>pollJob('control_1',{maxMs:100,intervalMs:1})),
+      withJobResponseBudget(100,()=>pollJob('control_1',{maxMs:15,intervalMs:1})).then(()=>null,e=>e),
+    ]);
+    assert.equal(separate[0].status,'running');assert.match(separate[1].message,/Timed out/);
+    await assert.rejects(()=>runGetJob('../another-user'),/Invalid job_id/);
+  } finally {if(prior===undefined)delete process.env.FETCHSANDBOX_BASE_URL;else process.env.FETCHSANDBOX_BASE_URL=prior;await new Promise(r=>srv.close(r));}
+});
+
+test('the actual MCP dispatcher returns a pending proof and resumes its measured result without repacking', async () => {
+  const {mkdtempSync,writeFileSync,rmSync}=await import('node:fs');
+  const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+  const {Client}=await import('@modelcontextprotocol/sdk/client/index.js');
+  const {InMemoryTransport}=await import('@modelcontextprotocol/sdk/inMemory.js');
+  const {createServer:makeMcp,registerHandlers}=await import('../dist/index.js');
+  const dir=mkdtempSync(join(tmpdir(),'fs-job-dispatch-'));
+  writeFileSync(join(dir,'main.py'),'print("fixture")\n');
+  // A credential-shaped test value is deliberately inside the config; the
+  // packer must exclude the file rather than upload it during a pending call.
+  writeFileSync(join(dir,'.mcp.json'),JSON.stringify({key:'fsk_control_not_a_real_credential'}));
+  let starts=0,done=false;
+  const srv=createServer((req,res)=>{res.setHeader('Content-Type','application/json');
+    if(req.method==='POST'){starts++;res.end(JSON.stringify({job_id:'dispatch_control',status:'running'}));}
+    else res.end(JSON.stringify(done?{status:'done',green_allowed:true,state:'proven',receipt_url:'https://fetchsandbox.com/runs/control',exit_codes:{buggy:1,fixed:0}}:{status:'running'}));
+  });
+  await new Promise(r=>srv.listen(0,'127.0.0.1',r));
+  const prior=process.env.FETCHSANDBOX_BASE_URL,priorRoot=process.env.FETCHSANDBOX_WORKSPACE_ROOT,priorKey=process.env.FETCHSANDBOX_API_KEY;
+  process.env.FETCHSANDBOX_BASE_URL=`http://127.0.0.1:${srv.address().port}`;
+  process.env.FETCHSANDBOX_WORKSPACE_ROOT=dir;process.env.FETCHSANDBOX_API_KEY='fsk_control_not_a_real_credential';
+  const core=makeMcp();registerHandlers(core);const [ct,st]=InMemoryTransport.createLinkedPair();
+  await core.connect(st);const client=new Client({name:'bounded-job-regression',version:'1'});await client.connect(ct);
+  try {
+    const start=Date.now();const pendingResult=await client.callTool({name:'prove_fix',arguments:{path:dir,diff:'--- a/main.py\n+++ b/main.py\n@@ -1 +1 @@\n-print("fixture")\n+print("changed")\n'}});
+    const pending=JSON.parse(pendingResult.content[0].text);
+    assert.notEqual(pendingResult.isError,true);assert.equal(pending.status,'running');assert.equal(pending.green_allowed,false);assert.ok(Date.now()-start<30_000);assert.equal(starts,1);
+    done=true;const result=await client.callTool(pending.next_tool_call);const body=JSON.parse(result.content[0].text);
+    assert.equal(body.state,'proven');assert.deepEqual(body.exit_codes,{buggy:1,fixed:0});assert.equal(starts,1);
+  } finally {
+    await client.close();await core.close();await new Promise(r=>srv.close(r));rmSync(dir,{recursive:true,force:true});
+    for(const [key,value] of [['FETCHSANDBOX_BASE_URL',prior],['FETCHSANDBOX_WORKSPACE_ROOT',priorRoot],['FETCHSANDBOX_API_KEY',priorKey]]){if(value===undefined)delete process.env[key];else process.env[key]=value;}
+  }
+});
+
+test('pending progress forwards only measured bounded fields',()=>{
+  for(const elapsed_s of [-1,NaN,Infinity,'999']) assert.equal(pendingJob('x',{status:'running',elapsed_s}).elapsed_s,undefined);
+  const out=pendingJob('x',{status:'running',elapsed_s:20,job_kind:'../../secret',private:'source'});
+  assert.equal(out.elapsed_s,20);assert.equal(out.job_kind,undefined);assert.equal(out.private,undefined);
+});
+
+test('stalled response bodies and retry waits cannot exceed a bounded poll',async()=>{
+  let mode='body',reads=0;
+  const srv=createServer((req,res)=>{reads++;
+    if(mode==='backoff'){res.writeHead(503);res.end('retry later');return;}
+    res.writeHead(200,{'Content-Type':'application/json'});res.write('{"status":');
+  });
+  await new Promise(r=>srv.listen(0,'127.0.0.1',r));
+  const prior=process.env.FETCHSANDBOX_BASE_URL;process.env.FETCHSANDBOX_BASE_URL=`http://127.0.0.1:${srv.address().port}`;
+  try{
+    for(mode of ['body','backoff']){
+      const start=Date.now();
+      const outcome=await withJobResponseBudget(40,()=>pollJob('same_job',{maxMs:1000,intervalMs:1}));
+      assert.equal(outcome.status,'running');assert.equal(outcome.job_id,'same_job');
+      assert.equal(outcome.poll_read_timed_out,true);assert.equal(outcome.green_allowed,undefined);
+      assert.ok(Date.now()-start<500,mode+' ignored the response deadline');
+    }
+    assert.equal(reads,2,'deadline must not submit a new job or restart a delayed read');
+  }finally{
+    if(prior===undefined)delete process.env.FETCHSANDBOX_BASE_URL;else process.env.FETCHSANDBOX_BASE_URL=prior;
+    srv.closeAllConnections();await new Promise(r=>srv.close(r));
+  }
+});
+
+test('an ambiguous job-start failure is not automatically resubmitted',async()=>{
+  let starts=0;
+  const srv=createServer((req,res)=>{starts++;res.writeHead(502);res.end('start response lost');});
+  await new Promise(r=>srv.listen(0,'127.0.0.1',r));
+  const prior=process.env.FETCHSANDBOX_BASE_URL;process.env.FETCHSANDBOX_BASE_URL=`http://127.0.0.1:${srv.address().port}`;
+  try{
+    await assert.rejects(()=>withJobResponseBudget(40,()=>startAndPoll('/api/mcp/prove_fix',{})),/do not automatically resubmit/);
+    assert.equal(starts,1);
+  }finally{if(prior===undefined)delete process.env.FETCHSANDBOX_BASE_URL;else process.env.FETCHSANDBOX_BASE_URL=prior;await new Promise(r=>srv.close(r));}
+});
+
+test('starting and polling share one response deadline',async()=>{
+  let starts=0;
+  const srv=createServer((req,res)=>{res.setHeader('Content-Type','application/json');
+    if(req.method==='POST'){starts++;setTimeout(()=>res.end(JSON.stringify({job_id:'same_deadline',status:'running'})),80);}
+    else res.end(JSON.stringify({status:'running'}));
+  });
+  await new Promise(r=>srv.listen(0,'127.0.0.1',r));
+  const prior=process.env.FETCHSANDBOX_BASE_URL;process.env.FETCHSANDBOX_BASE_URL=`http://127.0.0.1:${srv.address().port}`;
+  try{
+    const start=Date.now();
+    const outcome=await withJobResponseBudget(100,()=>startAndPoll('/api/mcp/prove_fix',{}, {maxMs:1000,intervalMs:1}));
+    assert.equal(outcome.job_id,'same_deadline');assert.equal(starts,1);
+    assert.ok(Date.now()-start<150,'polling reset the response budget after the start');
+  }finally{if(prior===undefined)delete process.env.FETCHSANDBOX_BASE_URL;else process.env.FETCHSANDBOX_BASE_URL=prior;await new Promise(r=>srv.close(r));}
+});

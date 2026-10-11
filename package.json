@@ -1,6 +1,6 @@
 {
   "name": "fetchsandbox-mcp",
-  "version": "0.7.2",
+  "version": "0.7.14",
   "mcpName": "io.github.fetchsandbox/mcp",
   "description": "A deterministic verification engine for agents. Fires the edge cases your sandbox never sends, then proves a fix: the same scenario fails on the old code and passes on the new.",
   "license": "MIT",
@@ -42,7 +42,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
-    "test": "npm run build && node --test test/*.test.mjs",
+    "test": "npm run build && node --test --test-concurrency=1 test/*.test.mjs",
     "prepublishOnly": "npm run build && npm test",
     "mcpb": "node scripts/build-mcpb.mjs"
   },

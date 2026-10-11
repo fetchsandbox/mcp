@@ -18,7 +18,7 @@ import { packDirToBase64, resolveWorkspaceDir } from "./pack.js";
 
 export interface ProveFixInput {
   diff: string; // the fix diff from fix_bug
-  bug?: string; // the finding (used to pick FetchSandbox's scenario)
+  bug?: string; // finding and requested acceptance criteria for the proof
   scenario?: string; // optional explicit scenario id
   sandbox_id?: string; // a twin from quickrun/run_workflow; auto-filled if omitted
   path?: string;
@@ -28,11 +28,14 @@ export interface ProveFixInput {
 export const proveFixTool = {
   name: "prove_fix",
   description:
+    "Long work returns status:running and next_tool_call:get_job within a short response. Follow that SAME job until done; never repeat this tool to poll. " +
     "THE PROOF STEP. The only way to establish that a fix actually works, and " +
-    "the only thing that produces a shareable receipt. " +
+    "produces an own-code proof receipt. " +
     "Ship the STILL-BUGGY project plus your proposed diff: FetchSandbox applies " +
     "the diff to a copy and runs the SAME failure probe against the buggy and " +
-    "the fixed tree, against real provider behaviour. Green ONLY on a measured " +
+    "the fixed tree. Inspect the receipt's provider modes: a recording double, " +
+    "a twin and an original provider are different evidence scopes. " +
+    "Green ONLY on a measured " +
     "flip — the bug demonstrably present before, demonstrably gone after. " +
     "CALL THIS BEFORE YOU WRITE THE FIX TO DISK. prove_fix needs the broken " +
     "tree to reproduce against; applying the diff first makes a measured proof " +
@@ -49,7 +52,10 @@ export const proveFixTool = {
       diff: { type: "string", description: "The unified diff returned by fix_bug." },
       bug: {
         type: "string",
-        description: "The finding being fixed — used to select FetchSandbox's scenario.",
+        description: "The finding being fixed AND the user's acceptance criteria: required " +
+          "app operations, expected state, ownership boundaries, wire types/units " +
+          "and readback checks. Preserve the requested scope; do not reduce a " +
+          "workflow request to a single symptom. Used to select/generate the probe.",
       },
       scenario: {
         type: "string",
@@ -88,6 +94,9 @@ export const proveFixTool = {
 } as const;
 
 export async function runProveFix(input: ProveFixInput): Promise<{
+  status?: string;
+  job_id?: string;
+  next_tool_call?: unknown;
   green_allowed: boolean;
   state?: string;
   reproduced?: boolean;
@@ -145,6 +154,7 @@ export async function runProveFix(input: ProveFixInput): Promise<{
     // (~5 min) + two probe runs (buggy + fixed). Returns as soon as it's done.
     maxMs: (timeout_s * 3 + 360) * 1000,
   });
+  if (raw.status === "running") return {...raw, green_allowed: false, state: "running", engine: "fetchsandbox"};
   if (raw.status === "error") {
     throw new ToolError(`FetchSandbox prove failed: ${raw.error ?? "unknown error"}`);
   }

@@ -55,7 +55,10 @@ import { quickrunTool, runQuickrun } from "./tools/quickrun.js";
 import { findBugsTool, runFindBugs } from "./tools/find_bugs.js";
 import { fixBugTool, runFixBug } from "./tools/fix_bug.js";
 import { proveFixTool, runProveFix } from "./tools/prove_fix.js";
+import { getJobTool, runGetJob, withJobResponseBudget } from "./tools/jobs.js";
 import { VERSION } from "./version.js";
+import { installTestCredentialsTool, runInstallTestCredentials } from "./tools/install_test_credentials.js";
+import { manageTunnelTool, runManageTunnel } from "./tools/manage_tunnel.js";
 
 /**
  * ONE registry, TWO transports.
@@ -117,7 +120,10 @@ const ANNOTATIONS: Record<string, {
   list_specs:     { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
   list_workflows: { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
   // Mints sandboxes and reads state back — a write, like quickrun.
+  install_test_credentials: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  manage_tunnel: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   validate_integration: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  get_job:        { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   list_runs:      { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
   list_scenarios: { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
   find_bugs:      { readOnlyHint: true,  destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -161,6 +167,7 @@ export const ALL_TOOLS = [
   annotated(coachTool), // listed FIRST — the conversational entry point
   annotated(findBugsTool), // investigate: find production bugs in the user's own code
   annotated(fixBugTool), // fix: grounded remediation → git diff proposal
+  annotated(getJobTool), // resumes existing jobs; never starts or repacks work
   annotated(proveFixTool), // prove: run FS's scenario buggy vs fixed → honest-green gate
   annotated(guideTool), // the deterministic single-shot router (still useful)
   annotated(quickrunTool), // run a bundled spec by slug — no import_spec/sandbox needed
@@ -176,6 +183,8 @@ export const ALL_TOOLS = [
   // version still have the tool, and the backend now answers them with a
   // redirect ("already available, call quickrun with spec_slug=…") instead of
   // an auth challenge. Removing the case would turn that into "unknown tool".
+  annotated(installTestCredentialsTool),
+  annotated(manageTunnelTool),
   annotated(validateIntegrationTool),
   annotated(listWorkflowsTool),
   annotated(runAllWorkflowsTool),
@@ -223,6 +232,7 @@ export const HOSTED_TOOL_NAMES = new Set([
   "validate_integration",  // prove the USER'S app, not our twin
   "quickrun",              // the only runner usable without a sandbox_id
   "run_workflow",          // re-run with a scenario armed
+  "get_job",               // resumes existing bounded reference jobs
   "verify_behavior",       // buggy vs fixed reference diff
   "list_workflows",        // workflows AND scenarios in one answer
 ]);
@@ -239,10 +249,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
   try {
     // withSignIn re-runs this on the one occasion it can succeed the second
     // time: a 401 that the human has since resolved in a browser.
-    const result = await withSignIn(async () => {
+    const result = await withJobResponseBudget(20_000, () => withSignIn(async () => {
       let result: unknown;
       const a = (args ?? {}) as Record<string, unknown>;
       switch (name) {
+        case getJobTool.name:
+          result = await runGetJob(typeof a.job_id === "string" ? a.job_id : "");
+          break;
         case coachTool.name:
           result = await runCoach({
             intent: typeof a.intent === "string" ? a.intent : undefined,
@@ -327,6 +340,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             name: typeof a.name === "string" ? a.name : undefined,
           });
           break;
+        case installTestCredentialsTool.name:
+          result = await runInstallTestCredentials({session_id: String(a.session_id), run_id: String(a.run_id), env_mapping: a.env_mapping as Record<string, string> | undefined});
+          break;
+        case manageTunnelTool.name:
+          result = await runManageTunnel({action: String(a.action), port: typeof a.port === "number" ? a.port : undefined});
+          break;
         case validateIntegrationTool.name:
           result = await runValidateIntegration({
             providers: Array.isArray(a.providers)
@@ -343,6 +362,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             suite: typeof a.suite === "string" ? a.suite as ValidateIntegrationInput["suite"] : undefined,
             receipt_config: a.receipt_config && typeof a.receipt_config === "object"
               ? a.receipt_config as ValidateIntegrationInput["receipt_config"] : undefined,
+            fixtures: a.fixtures && typeof a.fixtures === "object"
+              ? a.fixtures as ValidateIntegrationInput["fixtures"] : undefined,
+            application_context: a.application_context && typeof a.application_context === "object"
+              ? a.application_context as ValidateIntegrationInput["application_context"] : undefined,
+            preflight: a.preflight === true,
+            application_config: a.application_config && typeof a.application_config === "object"
+              ? a.application_config as ValidateIntegrationInput["application_config"] : undefined,
             execute: typeof a.execute === "boolean" ? a.execute : undefined,
           });
           break;
@@ -350,6 +376,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           result = await runListWorkflows({
             spec_id: typeof a.spec_id === "string" ? a.spec_id : "",
             spec_slug: typeof a.spec_slug === "string" ? a.spec_slug : "",
+            workflow_name: typeof a.workflow_name === "string" ? a.workflow_name : undefined,
           });
           break;
         case listRunsTool.name:
@@ -415,7 +442,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           throw new ToolError(`Unknown tool: ${name}`);
       }
       return result;
-    });
+    }));
     return {
       content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     };

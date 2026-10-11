@@ -80,7 +80,7 @@ export interface CoachResponse {
   session_id: string;
   step: string;
   message_for_user: string;
-  next_action: "wait_for_user" | "call_tool" | "done";
+  next_action: "wait_for_user" | "call_tool" | "act_in_app" | "done";
 
   // Structured question for native AskUserQuestion picker UI
   question?: string;
@@ -105,6 +105,7 @@ export const coachTool = {
     "the user has an open-ended 'help me add X', 'integrate X', 'test my X " +
     "integration' ask. " +
     "BEHAVIOR — strict, do exactly this each turn: " +
+    "If next_action=act_in_app, carry out next_actions with your platform's code, configuration and test tools, then return the results to the same validation session. Do not ask the human to choose routine fault tests, supply missing fixture data you can generate, or copy tool output. Ask only for genuine access, secret-entry constraints or ambiguous business rules. Never claim unsupported checks passed. " +
     "(1) Say `message_for_user` to the user (verbatim or lightly " +
     "paraphrased to fit your voice — but don't add new content). " +
     "(2) If `next_action=wait_for_user` AND `options` is present + " +

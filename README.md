@@ -32,8 +32,8 @@ nothing to install.
 }
 ```
 
-The key is optional — leave `env` out and everything still runs. Get one at
-**https://fetchsandbox.com/keys** when you want receipts that outlive 15 days.
+Discovery and reference tools are available without a key. Application planning, verification and managed local tunnelling require sign-in or an API key from
+**https://fetchsandbox.com/keys**.
 See [Accounts](#accounts).
 
 | Client | File |
@@ -130,6 +130,7 @@ Start with `guide`. It picks the right ones for what you asked.
 | `guide` | Routes a symptom to a spec, workflow and known failure class | `intent*`, `hints` |
 | `find_bugs` | Audits your project against known integration failure classes. No git remote needed — it reads the directory you point it at | `path`, `spec`, `timeout_s` |
 | `fix_bug` | Returns a `git diff` for one finding. Doesn't touch your files | `bug*`, `fix_pattern`, `path`, `spec`, `timeout_s` |
+| `get_job` | Retrieve the same running job without starting another analysis or proof | `job_id*` |
 | `prove_fix` | Runs the failure against your code before and after the diff. Green only on a measured flip | `diff*`, `bug`, `scenario`, `sandbox_id`, `path`, `timeout_s` |
 
 **Verifying an integration**
@@ -153,6 +154,7 @@ only ones that need no filesystem. Everything below requires a local project.
 |---|---|---|
 | `find_bugs` | Audits your project against known integration failure classes | `path`, `spec`, `timeout_s` |
 | `fix_bug` | Returns a `git diff` for one finding. Doesn't touch your files | `bug*`, `fix_pattern`, `path`, `spec`, `timeout_s` |
+| `get_job` | Retrieve the same running job without starting another analysis or proof | `job_id*` |
 | `prove_fix` | Runs the failure against your code before and after the diff. Green only on a measured flip | `diff*`, `bug`, `scenario`, `sandbox_id`, `path`, `timeout_s` |
 | `run_all_workflows` | Runs several workflows in one call | `sandbox_id*`, `workflow_names` |
 | `list_scenarios` | The failures a spec can inject | `sandbox_id*` |
@@ -171,7 +173,7 @@ here implied the opposite.
 
 Excluded before packing: `.git`, `node_modules` and build output, agent
 instruction files, and anything credential-shaped — `.env*`, `*.pem`, `*.key`,
-`id_rsa*`, `*.tfstate`, `.npmrc`, `.aws`, `.ssh` and more.
+`id_rsa*`, `*.tfstate`, `.npmrc`, `.aws`, `.ssh`, `.mcp.json`, `.mcp.*.json`, `mcp.json`, and more.
 
 Then the archive is read back and **refused** if it still contains something
 shaped like a live credential, wherever it lives and whatever it is called. A
@@ -181,6 +183,19 @@ cover what someone thought of; the scan is there for the rest.
 If you would rather nothing left at all, the analysis needs the source today.
 That is the honest state.
 
+### Long-running work
+
+The MCP response waits briefly, then returns `status: running`, its `job_id`,
+and a `next_tool_call` for `get_job`. Follow that call until `status: done` or
+`error`. It reads the existing backend job; it does not upload the project
+again or start another proof. Keep the original tree unchanged while the proof
+runs. A running job does not establish a pass.
+
+This applies to discovery, proposed fixes, application proofs, and async
+reference verification. Direct library calls keep their blocking behavior.
+Job retention and ownership still belong to the existing backend. This change
+does not make its in-memory job tracker survive a backend restart.
+
 ### Receipts are public to anyone holding the link
 
 `submit_proof` attaches the real requests and responses from your app's
@@ -189,8 +204,9 @@ behaviour. That page is served without a login — that is the point of it, you
 drop the link in a PR — which means the bodies on it are readable by anyone who
 has the link.
 
-The probes run against the FetchSandbox twin, not your provider, so the data is
-sandbox data. But the request bodies are the ones your app built, and those can
+Provider execution can use a FetchSandbox twin or a recording test double;
+read the receipt's execution scope. A recording double does not establish twin
+or live-provider fidelity. But the request bodies are the ones your app built, and those can
 carry values from your config. Look at a receipt before you share it.
 
 ## Configuration
@@ -221,3 +237,27 @@ MIT — see [LICENSE](LICENSE).
 
 - [fetchsandbox.com](https://fetchsandbox.com)
 - [Source](https://github.com/fetchsandbox/mcp) · [Issues](https://github.com/fetchsandbox/mcp/issues)
+
+## Verify a local app without ngrok
+
+Version 0.7.13 adds `manage_tunnel` to the local MCP package. Start your actual isolated app, open its loopback port, and give the returned `app_base_url` to `validate_integration`. Declare the existing app webhook path in `application_config.event_destinations`. FetchSandbox signs provider-native events and checks independently saved state through the existing application runner. Configure test secrets via the protected handoff, preflight, execute once and retrieve the same run receipt. Close the connection and remove temporary settings afterward. Connectivity alone is not a passing test.
+
+Requires outbound HTTPS to fetchsandbox.com, a running local MCP process and a real local app. No inbound firewall rule or separate tunnel install is needed. Restricted networks may require their approved proxy/CA configuration. Node 22.21+ or 24.5+ supports `NODE_USE_ENV_PROXY=1` with HTTPS_PROXY and NO_PROXY; include 127.0.0.1/localhost in NO_PROXY and use NODE_EXTRA_CA_CERTS for an approved corporate CA. Older Node versions do not automatically support this proxy setup. Do not disable TLS certificate validation. Corporate firewalls can still block the connection. Leases expire after 30 minutes or server restart; uncertain writes are not automatically repeated.
+
+### Private credentials for local app verification (0.7.14)
+
+After configuring an owned application run, Cursor, Claude Code and other local
+MCP clients call `install_test_credentials` with its session and run IDs.
+The existing FetchSandbox account key authorizes retrieval. Temporary provider
+keys, webhook secrets and the verifier token are written to a new private dotenv
+file under `~/.fetchsandbox/handoffs/` (directory 0700, file 0600), outside the
+project. Only its path and variable names enter the tool result. `env_mapping`
+explicitly maps returned names to the real app's environment settings.
+
+Load that file with the disposable application's dotenv loader without printing
+it. Configure the returned twin base URLs, restart the app, preflight, execute
+once and retrieve the same receipt. Remove the temporary file after testing.
+Files do not delete themselves and are not production credentials. Never paste
+values into chat, source, logs or command arguments. Replit/Lovable keep their
+existing owner browser handoff and native secret managers. This change does not
+route `prove_fix` through the local relay.

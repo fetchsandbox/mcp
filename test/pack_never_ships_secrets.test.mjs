@@ -86,6 +86,24 @@ test("a live key under a name no pattern covers stops the upload", () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test("project MCP credential configuration is excluded, including nested configs", () => {
+  const { root, proj } = repo();
+  for (const name of [".mcp.json", ".mcp.private.json", "mcp.json", "config/.mcp.json"]) {
+    writeFileSync(join(proj, name), JSON.stringify({ mcpServers: { fetchsandbox: { env: { FETCHSANDBOX_API_KEY: "fsk_" + "fixtureonlynotarealcredential000000" } } } }));
+  }
+  const listed = inside(proj, () => entries(proj));
+  assert.ok(!listed.some(e => /(?:^|\/)(?:\.mcp(?:\.private)?|mcp)\.json$/.test(e)));
+  assert.ok(listed.some(e => e.endsWith("src/a.js")));
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("a FetchSandbox key in an arbitrary source file refuses upload", () => {
+  const { root, proj } = repo();
+  writeFileSync(join(proj, "src", "settings.js"), 'const key="' + "fsk_" + "fixtureonlynotarealcredential000000" + '";');
+  inside(proj, () => assert.throws(() => packDirToBase64(proj), /src\/settings.js.*FetchSandbox API key/));
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("the packaged directory is bounded by the client's working directory", () => {
   const { root, proj } = repo();
   const cwd = process.cwd();
