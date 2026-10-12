@@ -367,6 +367,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             application_context: a.application_context && typeof a.application_context === "object"
               ? a.application_context as ValidateIntegrationInput["application_context"] : undefined,
             preflight: a.preflight === true,
+            reassess: a.reassess === true,
             application_config: a.application_config && typeof a.application_config === "object"
               ? a.application_config as ValidateIntegrationInput["application_config"] : undefined,
             execute: typeof a.execute === "boolean" ? a.execute : undefined,

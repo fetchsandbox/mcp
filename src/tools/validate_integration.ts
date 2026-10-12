@@ -24,6 +24,7 @@ import { startAndPoll } from "./jobs.js";
  * was right about that.
  */
 export interface ValidateIntegrationInput {
+  reassess?: boolean;
   /** Where THEIR app is reachable. The one fact we cannot derive. */
   app_base_url?: string;
   /** Providers the app integrates — ["paddle", "resend"] for a relay. */
@@ -82,7 +83,7 @@ function applicationContractDiagnostics(config: Record<string, unknown>) {
     }
   };
   config.checks.forEach((check, index) => {
-    if (!object(check) || check.unsupported_reason) return;
+    if (!object(check) || check.unsupported_reason || check.blocker) return;
     const prefix = `application_config.checks[${index}]`;
     const supported = ["id", "name", "actions", "observe", "assertion", "before", "fault", "observation_deadline_seconds"];
     const unknown = Object.keys(check).filter(key => !supported.includes(key));
@@ -148,6 +149,7 @@ export const validateIntegrationTool = {
     "Completion rule: a request to verify an app includes its applicable failure checks without another user prompt. When verification_continuation.required is true, continue in this agent: inspect pending_checks, preserve every declared check and its assertions, implement supported actions, and rerun a fresh attempt. Stop only with measured results or concrete blockers showing the missing capability and attempted evidence. Not run, not armed, and no observer yet are work to finish, not unsupported features. Do not clean up the session or present a final proof while actionable checks remain. Ask the owner only for genuinely missing business decisions, credentials or actions you cannot perform. " +
     "For a local app, start the actual app and call manage_tunnel with its port; use the returned app_base_url. No ngrok install is needed. The managed relay origin deliberately rejects direct browser/curl requests with 404; after configuration and credential installation, test connectivity with validate_integration preflight instead. Do not interpret that private-origin 404 as an app failure or expose relay credentials. Hosted builders use their published origin. Start with providers (and optional app_base_url), then reuse the returned session_id for application_context, fixtures and attempts. Do not include application_context in the initial session call. Inspect how the actual app or workflow executes before choosing a verification path. If the builder can run that workflow locally, bind its real provider clients to every returned twin URL and the supplied test authentication. Use the returned provider operation contracts to implement those clients; a missing canned workflow does not mean the provider lacks an API operation. The existing arm/probe path does not require a published app or webhook: select a probe from the returned matrix, call arm with session_id, send its request_headers on EVERY provider request across the session, execute the actual workflow entry point, then call probe with the same session_id and returned run_id. Independently assert saved app state in the host and report that evidence separately. Provider traffic alone remains app_verified:false; it does not establish application execution or state. Do not substitute a standalone simulation, direct twin calls or a curated workflow for the user's implementation. A public origin is required when FetchSandbox must drive or observe an HTTP application suite; the hosted setup instructions below apply to that path. " +
     "For hosted application_workflow_v1 apps, build and publish the disabled test adapter before requesting short-lived credentials. After installing the existing handoff and republishing, call preflight:true with session_id/run_id. A setup_blocked response is not a failed application test. Its next_tool_call is null: repair its exact host-side blocker first, then call resume_tool_call for the SAME run/preflight without rotating credentials. Do not poll an unchanged setup blocker. Execution has a separate deadline. Execution is already non-blocking: execute:true starts the existing backend job and returns running promptly. Use the SAME builder agent to follow status; no extra background helper or helper approval is needed. Never execute twice; retrieve status with session_id/run_id only. If the browser stops at a security challenge, immediately hand the owner the SAME run/order-verified original TEST checkout URL (livemode=false) while observation continues; never bypass the challenge, silently wait, create a replacement checkout or retry Pay. For an owner-assisted browser step, use ONE native question containing that verified URL, pause the builder for its answer while the backend job continues, and record that answer once. Do not keep working while asking for a plain chat reply that the host queues, or ask again after confirmation is recorded. Browser payments require an available browser or one explicit user action, and independently observed paid state; a click is not proof. After proof, remove only temporary settings, republish and verify disabled externally. " +
+    "When asked to reassess or recontract, set reassess=true and supply application_config.scope_review for every candidate check. Record outside-scope features separately, and keep relevant missing or failed behavior required. Scope is declared by the app-owning agent from its inspected code and requirements, not guessed from a provider name. " +
     "For every app, inspect capabilities, coverage_policy and application_actions. Review every supplied coverage dimension against inspected app behavior without waiting for the user to enumerate failure tests. Supply application_config.coverage_review with relevance, reason and linked check IDs when the builder authors the plan. Missing dimensions stay unreviewed. A dimension review is not execution proof; never claim all possible invariants are known. Prepare missing test products, prices and related records before failures: author fixtures using documented provider operations, include a final GET with an exact identity assertion, then configure the app with returned fixture IDs. The server uses the existing twin workflow runner and independently checks read-back. Fixture readiness is not app proof. Unsupported application checks must be reported explicitly, not replaced by a separate script or quickrun. " +
     "Use the returned fixture_authoring contract, not a web search for assertion syntax. Prepare fixtures before configuring any attempt. Fixture assertions are GET-only and contain select, equals (string), required:true, count:1. Use separate asserted GET steps for each additional value; do not use application all_of or where predicates in fixture assertions. Paddle selectors include the response envelope, e.g. data.id; Stripe uses id. Read the provided Paddle one-time-price example and adapt its product and amount to the app. If fixed receipt-suite transactions cannot match the app's product, price and pending order, do not execute them as app proof or a pointless rejection diagnostic. Report that compatibility gap, cancel any unexecuted mismatched attempt, then use application_workflow_v1 for supported checks while preserving untested receipt rules. " +
     "After session creation, send session_id and application_context with the original goal and inspected workflow to obtain model-proposed rules, missing observations and fixture requirements. This planning action requires sign-in. Proposals are not executed checks. The app-owning agent authors the executable contract from inspected code and business scope. Server suggestions are advisory. Review every coverage dimension; declare relevant unsupported behavior explicitly and explain genuinely unrelated features as not_applicable. Omitted suggestions are retained separately and cannot add required checks. If server_requirements_model_available is false or planning returns requirements_model_unavailable, inspect the app and author the candidate contract with your own model; label it builder-proposed, not a FetchSandbox model result. Never wait for the human to write routine test requirements. " +
@@ -352,6 +354,7 @@ export const validateIntegrationTool = {
         required: ["webhook_url", "recipient_a", "recipient_b", "purchase_marker", "app_version", "source_lookup_required"],
         additionalProperties: false,
       },
+      reassess: {type: "boolean", description: "Set true when the user asks to reassess/recontract an app. Requires suite=application_workflow_v1 and application_config.scope_review for EVERY candidate check. Freeze a fresh contract scoped to inspected promised behavior. Outside-scope proposals are recorded separately; missing protection on relevant behavior remains a requirement. Never edit historical results or remove a failed requirement for the same app version."},
       preflight: {type: "boolean", description: "Read-only public readiness check for a configured application_workflow_v1. Requires session_id/run_id. Checks frozen empty baseline and token enforcement without creating orders, injecting faults or rotating secrets. Retry same run after its exact setup blocker is repaired."},
       execute: {type: "boolean", description: "Drive the configured app and evaluate the frozen receipt suite. Requires session_id/run_id; configuration acknowledgment alone is not proof. Starts the existing backend job asynchronously and returns promptly; follow status in this agent without allocating a background helper."},
       fixtures: {
@@ -392,7 +395,7 @@ export const validateIntegrationTool = {
       },
       application_config: {
         type: "object", required: ["app_version", "disposable_test_app", "checks"], additionalProperties: false,
-        description: "Frozen HTTP app drive/read-back contract: 1-30 checks, 1-20 actions per executable check, at most 300 declared actions in total, below 64 KiB. Preserve intermediate reads within these bounds; do not silently remove them. First check id=baseline must establish success. Checks require id, name, before {path,assertion}, ordinary HTTP actions [{method,path,body?,expect_status?}] or signed-event actions [{event:{provider,type,payload},expect_status?}], observe {path}, and assertion using select/equals/count/required or all_of. where and all_of must be lists of assertion objects, not field maps. equals accepts JSON strings, numbers, booleans and null; numeric/boolean literals preserve type, and null must be a present null field. Stripe event.payload is only the resource inside data.object, never a full event or a data.object wrapper: the server constructs and signs the envelope. Optional per-check observation_deadline_seconds (0-180, repeat=1 only) records bounded polling for eventual saved state; it does not drive a browser or turn a timeout into a pass. Every check first reads its declared starting-state precondition. Baseline requires count=0 on the same observed collection, with no where filter. Use {{run_id}} to scope fresh synthetic records. All paths are app-relative without query strings or fragments, including non-secret run_id queries; preserve run scoping through an inspected protected path-segment observer. Baseline permits only ordinary HTTP actions without signed events; prove signed purchase/access in later checks. Do not combine event actions with method/path/body/headers. {{step1.id}} binds a real action response to read-back. assertion.repeat (1-5) and stable_under_repeat support replay. Optional fault {provider,scenario} requires independently recorded provider refusal. Unsupported checks contain id,name,unsupported_reason only. No user-supplied credentials, auth headers or live data. require_verifier_token=true generates an owner-only temporary Bearer token through secure handoff for protected test endpoints.",
+        description: "Frozen HTTP app drive/read-back contract: 1-30 checks, 1-20 actions per executable check, at most 300 declared actions in total, below 64 KiB. Preserve intermediate reads within these bounds; do not silently remove them. First check id=baseline must establish success. Checks require id, name, before {path,assertion}, ordinary HTTP actions [{method,path,body?,expect_status?}] or signed-event actions [{event:{provider,type,payload},expect_status?}], observe {path}, and assertion using select/equals/count/required or all_of. where and all_of must be lists of assertion objects, not field maps. equals accepts JSON strings, numbers, booleans and null; numeric/boolean literals preserve type, and null must be a present null field. Stripe event.payload is only the resource inside data.object, never a full event or a data.object wrapper: the server constructs and signs the envelope. Optional per-check observation_deadline_seconds (0-180, repeat=1 only) records bounded polling for eventual saved state; it does not drive a browser or turn a timeout into a pass. Every check first reads its declared starting-state precondition. Baseline requires count=0 on the same observed collection, with no where filter. Use {{run_id}} to scope fresh synthetic records. All paths are app-relative without query strings or fragments, including non-secret run_id queries; preserve run scoping through an inspected protected path-segment observer. Baseline permits only ordinary HTTP actions without signed events; prove signed purchase/access in later checks. Do not combine event actions with method/path/body/headers. {{step1.id}} binds a real action response to read-back. assertion.repeat (1-5) and stable_under_repeat support replay. Optional fault {provider,scenario} requires independently recorded provider refusal. For reassess/recontract include scope_review for every candidate check. Outside-scope feature proposals contain id,name,unsupported_reason only and move to separate scope_exclusions; they are not required tests. In-scope missing work uses id,name,blocker {category,reason,evidence,...}, never a free-text unsupported reason. engine_unsupported requires a capability confirmed by current backend capabilities; a missing app route or observer is not an engine gap. Unresolved policy remains unmeasured. Legacy untyped reasons remain unclassified, not engine unsupported. No user-supplied credentials, auth headers or live data. require_verifier_token=true generates an owner-only temporary Bearer token through secure handoff for protected test endpoints.",
         properties: {
           app_version: {type: "string"}, disposable_test_app: {type: "boolean", enum: [true]},
           require_verifier_token: {type: "boolean"},
@@ -403,6 +406,7 @@ export const validateIntegrationTool = {
           event_delivery: {type: "string", enum: ["direct", "provider_lifecycle"], description: "provider_lifecycle registers provider-native subscriptions and requires actual app workflow actions. Optional provider_lifecycle_workflows selects catalog-owned witnesses/readback. Omitted selection preserves payment/email witnesses. direct uses verifier-signed events."},
           provider_lifecycle_workflows: {type: "object", additionalProperties: {type: "string"}, description: "Optional destination-provider to returned catalog workflow id, e.g. {stripe: create_and_send_invoice}. Only declared application_lifecycle profiles are accepted. The server freezes expected events and independently reads the event resource in the workflow terminal state. Do not invent event names or substitute provider traffic for app-state assertions."},
           event_destinations: {type: "object", additionalProperties: {type: "string"}, description: "Session-provider to same-origin webhook path without query/fragment. Requires require_verifier_token=true and the isolated FETCHSANDBOX_<PROVIDER>_WEBHOOK_SECRET from secure handoff. Complete signed action shape: {event:{provider,type,payload},expect_status:200}; exact replay: {event:{provider,replay_of:'{{step2.event_id}}'},expect_status:200}. No method/path/body/headers on signed actions. Baseline uses ordinary HTTP actions; signed events belong in later checks. Existing signature checks must remain enabled."},
+          scope_review: {"type": "array", "minItems": 1, "maxItems": 30, "description": "Required when reassessing/recontracting app scope. Review EVERY candidate check from inspected app behavior. Outside-app-scope entries must be non-executable proposals with inspection references; the backend excludes them from required checks and records them separately. Keep missing protection on relevant behavior in scope. A reason is an app-agent declaration, not independent source attestation. coverage_review links must name retained required checks only. Preserve failed requirements for the same app version.", "items": {"type": "object", "additionalProperties": false, "properties": {"check_id": {"type": "string"}, "classification": {"type": "string", "enum": ["in_scope", "outside_app_scope", "unresolved"]}, "reason": {"type": "string", "minLength": 1, "maxLength": 1000}, "evidence": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"type": "string", "minLength": 1, "maxLength": 500}}}, "required": ["check_id", "classification", "reason", "evidence"]}},
           observation_seconds: {type: "number", minimum: 0.1, maximum: 5},
           checks: {
   "type": "array",
@@ -410,6 +414,84 @@ export const validateIntegrationTool = {
   "maxItems": 30,
   "items": {
     "oneOf": [
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "name": {
+      "type": "string"
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "setup_missing",
+            "observation_missing",
+            "policy_unresolved",
+            "engine_unsupported"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "capability": {
+          "type": "string",
+          "enum": [
+            "provider_lifecycle",
+            "provider_operation",
+            "independent_storage_attestation"
+          ]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ]
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "reason",
+        "evidence"
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "blocker"
+  ]
+},
       {
         "type": "object",
         "additionalProperties": false,
@@ -735,6 +817,7 @@ export async function runValidateIntegration(
     throw new ToolError("Configure, execute, arm, evaluate and cancel are separate calls.");
   }
   if (input.receipt_config && !input.suite) throw new ToolError("receipt_config requires suite.");
+  if (input.reassess && (input.suite !== "application_workflow_v1" || !Array.isArray(input.application_config?.scope_review))) throw new ToolError("Reassessment requires application_workflow_v1 and scope_review for every candidate check.");
   if (input.application_config && input.suite !== "application_workflow_v1") throw new ToolError("application_config requires application_workflow_v1.");
   if ((input.execute || input.preflight) && !input.run_id?.trim()) {
     throw new ToolError("Pass the `run_id` returned by suite configuration with the same session_id for execute or preflight.");
@@ -776,6 +859,7 @@ export async function runValidateIntegration(
     fixtures: input.fixtures ?? null,
     application_context: input.application_context ?? null,
     application_config: input.application_config ?? null,
+    reassess: input.reassess ?? false,
   };
   if (input.application_context) {
     // Reuse the existing job owner. A planner completion can outlive both

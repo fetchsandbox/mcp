@@ -65,3 +65,14 @@ test('workflow lifecycle selection carries catalog ids without allowing invented
   request.application_config.provider_lifecycle_workflows.stripe={witness_events:['made.up']};
   assert.equal(validate(request).valid,false);
 });
+
+test('scope reassessment exposes exclusions separately from typed pending work',()=>{
+  const blocked={id:'ordering',name:'Older event keeps current state',blocker:{category:'observation_missing',reason:'Missing saved-state observer',evidence:['app.py: route inspection']}};
+  const request=input([baseline,blocked,{id:'refund',name:'Refund',unsupported_reason:'Not a promised shop feature'}]);
+  request.application_config.scope_review=request.application_config.checks.map(c=>({check_id:c.id,classification:c.id==='refund'?'outside_app_scope':'in_scope',reason:'Inspected app behavior',evidence:['app.py: route inspection']}));
+  assert.equal(validate(request).valid,true);
+  blocked.blocker.category='outside_app_scope';
+  assert.equal(validate(request).valid,false);
+  blocked.blocker.category='engine_unsupported';blocked.blocker.capability='invented';
+  assert.equal(validate(request).valid,false);
+});
