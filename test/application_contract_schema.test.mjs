@@ -76,3 +76,13 @@ test('scope reassessment exposes exclusions separately from typed pending work',
   blocked.blocker.category='engine_unsupported';blocked.blocker.capability='invented';
   assert.equal(validate(request).valid,false);
 });
+
+test('fixture discovery stays in the existing authenticated MCP session',()=>{
+  for(const inspect of [
+    {provider:'paddle',resource:'state'},
+    {provider:'paddle',resource:'state',collection:'transactions',limit:20,offset:0},
+    {provider:'paddle',resource:'operations',method:'POST',path:'/transactions'},
+  ]) assert.equal(validate({session_id:'vs_owned',inspect}).valid,true);
+  assert.equal(validate({session_id:'vs_owned',inspect:{provider:'paddle',resource:'state',limit:101}}).valid,false);
+  assert.equal(validate({session_id:'vs_owned',inspect:{provider:'paddle',resource:'state',sandbox_id:'someone_else'}}).valid,false);
+});

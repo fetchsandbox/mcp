@@ -362,6 +362,8 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
             suite: typeof a.suite === "string" ? a.suite as ValidateIntegrationInput["suite"] : undefined,
             receipt_config: a.receipt_config && typeof a.receipt_config === "object"
               ? a.receipt_config as ValidateIntegrationInput["receipt_config"] : undefined,
+            inspect: a.inspect && typeof a.inspect === "object"
+              ? a.inspect as ValidateIntegrationInput["inspect"] : undefined,
             fixtures: a.fixtures && typeof a.fixtures === "object"
               ? a.fixtures as ValidateIntegrationInput["fixtures"] : undefined,
             application_context: a.application_context && typeof a.application_context === "object"

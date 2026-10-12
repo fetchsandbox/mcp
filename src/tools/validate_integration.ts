@@ -52,6 +52,7 @@ export interface ValidateIntegrationInput {
   };
   execute?: boolean;
   preflight?: boolean;
+  inspect?: {provider: string; resource: "state" | "operations"; collection?: string; offset?: number; limit?: number; method?: string; path?: string};
   fixtures?: {id: string; steps: Record<string, unknown>[]};
   application_context?: Record<string, unknown>;
   application_config?: Record<string, unknown>;
@@ -357,6 +358,11 @@ export const validateIntegrationTool = {
       reassess: {type: "boolean", description: "Set true when the user asks to reassess/recontract an app. Requires suite=application_workflow_v1 and application_config.scope_review for EVERY candidate check. Freeze a fresh contract scoped to inspected promised behavior. Outside-scope proposals are recorded separately; missing protection on relevant behavior remains a requirement. Never edit historical results or remove a failed requirement for the same app version."},
       preflight: {type: "boolean", description: "Read-only public readiness check for a configured application_workflow_v1. Requires session_id/run_id. Checks frozen empty baseline and token enforcement without creating orders, injecting faults or rotating secrets. Retry same run after its exact setup blocker is repaired."},
       execute: {type: "boolean", description: "Drive the configured app and evaluate the frozen receipt suite. Requires session_id/run_id; configuration acknowledgment alone is not proof. Starts the existing backend job asynchronously and returns promptly; follow status in this agent without allocating a background helper."},
+      inspect: {type: "object", required: ["provider", "resource"], additionalProperties: false,
+        description: "Read fixture inputs through MCP using session_id. Website /api/sandboxes/*/state and /api/specs/*/endpoints require separate website authentication; do not curl them with the MCP key or ask for live provider keys. First resource=state returns collection counts; select collection to read real IDs and relationships with pagination. resource=operations lists provider contracts; specify both exact method and documented path to resolve one schema. Read-only, session-owned twins only, not application proof.",
+        properties: {provider: {type: "string"}, resource: {type: "string", enum: ["state", "operations"]},
+          collection: {type: "string"}, offset: {type: "integer", minimum: 0}, limit: {type: "integer", minimum: 1, maximum: 100},
+          method: {type: "string"}, path: {type: "string"}}},
       fixtures: {
         type: "object", required: ["id", "steps"], additionalProperties: false,
         description: "Prepare session-owned twin data before app tests. Requires session_id. Stable id makes repeated calls replay-safe. Every step names spec, method and relative path. Use {{step1.id}} for dependencies. End with GET and an exact identity assertion. No live provider calls.",
@@ -856,6 +862,7 @@ export async function runValidateIntegration(
     execute: input.execute ?? false,
     preflight: input.preflight ?? false,
     async_job: input.execute ?? false,
+    inspect: input.inspect ?? null,
     fixtures: input.fixtures ?? null,
     application_context: input.application_context ?? null,
     application_config: input.application_config ?? null,
