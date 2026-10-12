@@ -50,7 +50,7 @@ node -e '
 # private repo for a day while being described to the person who asked for it.
 # Anything a user is told to look at must be on the mirror, or the link is a 404.
 PATHS=(src test scripts examples package.json package-lock.json server.json
-       tsconfig.json README.md LICENSE glama.json)
+       tsconfig.json README.md LICENSE glama.json AGENTS.md)
 
 echo "syncing fetchsandbox-mcp $VERSION to the public mirror"
 git clone -q --depth 1 "https://github.com/fetchsandbox/mcp.git" "$WORK/mirror"
