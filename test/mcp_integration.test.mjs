@@ -34,6 +34,7 @@ function cannedBackendResponse(path) {
   if (path.endsWith("/api/mcp/validate_integration")) {
     const body = httpCalls.at(-1)?.body;
     if (body?.execute) return {job_id: "receipt_job", status: "running"};
+    if (body?.application_context && body?.async_job) return {job_id:"planning_job",status:"running"};
     if (body?.providers?.length) return {session_id: "vs_test", step: "handover", next_action: "inspect_app_then_configure_receipt_suite",
       next_tool_call: null, missing_configuration: ["webhook_url"], legs: {paddle: {base_url: "https://twin.test"}},
       application_setup_policy: {replit_private_development_url: {steps: ["restore privacy"]}}};
@@ -70,6 +71,7 @@ function cannedBackendResponse(path) {
           request: {body: 'large receipt body '.repeat(1000)}}))} : {})},
       manifest: {session_id: "vs_receipt"}, evidence: {raw: "large private archive"}};
   }
+  if (path.endsWith("/api/mcp/jobs/planning_job")) return {status:"done",step:"planning",app_verified:false,verification_plan:{rules:[{id:"A1",status:"unmeasured"}]}};
   if (path.includes("/workflows/") && path.endsWith("/run")) {
     return {
       flow_name: "accept_payment",
@@ -243,10 +245,12 @@ test("initial application planning gets an actionable session-first recovery thr
   const session = JSON.parse(started.content[0].text);
   const planned = await client.callTool({name: "validate_integration", arguments: {session_id: session.session_id, application_context}});
   assert.notEqual(planned.isError, true);
-  assert.equal(httpCalls.length, 2);
+  assert.equal(httpCalls.length, 3);
   assert.equal(httpCalls[1].body.session_id, "vs_test");
   assert.deepEqual(httpCalls[1].body.application_context, application_context);
   assert.deepEqual(httpCalls[1].body.providers, []);
+  assert.equal(httpCalls[1].body.async_job,true);
+  assert.equal(httpCalls[2].path,"/api/mcp/jobs/planning_job");
 });
 
 test("setup actions name their own required session and configured attempt", async () => {

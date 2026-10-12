@@ -64,6 +64,7 @@ function exchange(port, agent, message, headers = {}) {
 
 test("real hosted HTTP isolates protected application-context authentication", { timeout: 30000 }, async (t) => {
   const seen = [];
+  const planningJobs = new Map();
   let active = 0;
   let peakActive = 0;
   const backend = createServer(async (req, res) => {
@@ -89,8 +90,18 @@ test("real hosted HTTP isolates protected application-context authentication", {
       res.end(JSON.stringify({ detail: `${PRIVATE_ERROR} ${KEY_A} ${KEY_B}` }));
     } else {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ session_id: body.session_id, owner,
-        application_context: body.application_context, app_verified: false }));
+      if (req.method === "POST" && body.application_context && body.async_job) {
+        const jobId = 'plan_'+body.session_id;
+        planningJobs.set(jobId,{session_id:body.session_id,owner,application_context:body.application_context,app_verified:false});
+        res.end(JSON.stringify({job_id:jobId,status:'running'}));
+      } else if (req.method === "GET" && req.url.startsWith('/api/mcp/jobs/')) {
+        const job = planningJobs.get(req.url.split('/').at(-1));
+        assert.equal(job?.owner,owner,'job poll must retain tenant identity');
+        res.end(JSON.stringify({status:'done',...job}));
+      } else {
+        res.end(JSON.stringify({ session_id: body.session_id, owner,
+          application_context: body.application_context, app_verified: false }));
+      }
     }
   });
   const backendPort = await listen(backend);
@@ -167,6 +178,11 @@ test("real hosted HTTP isolates protected application-context authentication", {
       : owner === "tenant_b" ? `Bearer ${KEY_B}` : undefined;
     assert.ok(matching[0].authorization === expected,
       `${label}: backend authorization differed from this request's fixture`);
+    if (owner) {
+      const polls=seen.filter(row=>row.path==='/api/mcp/jobs/plan_'+session);
+      assert.equal(polls.length,1,'one read-only poll for the submitted job');
+      assert.ok(polls[0].authorization===expected,'job poll must use this request tenant');
+    }
     return response;
   };
 
@@ -253,8 +269,10 @@ test("real hosted HTTP isolates protected application-context authentication", {
     for (const fixture of sensitiveFixtures) {
       assert.ok(!output.includes(fixture), "server logs exposed a private fixture value");
     }
-    assert.ok(seen.every((row) => row.path === BACKEND_PATH),
-      "hosted auth failure must not invoke device sign-in or another backend operation");
+    assert.ok(seen.every((row) => row.path === BACKEND_PATH ||
+      (row.method === 'GET' && planningJobs.has(row.path.split('/').at(-1)) &&
+       [KEY_A,KEY_B].some(key=>row.authorization===`Bearer ${key}`))),
+      "only authenticated submitted-job polls may follow planning; no device sign-in or unrelated operation");
     assert.ok(seen.every((row) => row.authorization !== `Bearer ${ENV_KEY}`),
       "a hosted request must never fall back to the process API key");
   });

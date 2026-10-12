@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import {runValidateIntegration, validateIntegrationTool} from "../dist/tools/validate_integration.js";
 
 const event = {provider:"paddle",type:"transaction.completed",payload:{id:"{{step1.transactionId}}",status:"completed"}};
-const baseline = {id:"baseline",name:"Pending order saved",actions:[{method:"POST",path:"/api/testing/orders",body:{run_id:"{{run_id}}"}}],before:{path:"/api/testing/state/{{run_id}}",assertion:{select:"orders",count:0}},observe:{path:"/api/testing/state/{{run_id}}"},assertion:{select:"orders",count:1,required:true}};
-const purchase = {id:"paid",name:"Signed payment grants access",actions:[{event,expect_status:200}],observe:{path:"/api/testing/state/{{run_id}}"}};
+const baseline = {id:"baseline",name:"Pending order saved",actions:[{method:"POST",path:"/api/testing/orders",body:{run_id:"{{run_id}}"}}],before:{path:"/api/testing/state/{{run_id}}",assertion:{select:"orders[*]",count:0,required:true}},observe:{path:"/api/testing/state/{{run_id}}"},assertion:{select:"orders[*]",count:1,required:true}};
+const purchase = {...baseline,id:"paid",name:"Signed payment grants access",actions:[{event,expect_status:200}]};
 const input = (checks) => ({session_id:"vs_owned",suite:"application_workflow_v1",application_config:{app_version:"test-v1",disposable_test_app:true,require_verifier_token:true,event_destinations:{paddle:"/api/store/webhooks/paddle"},checks}});
 
 test("captured routed signed action produces actionable diagnostics without backend calls",async()=>{
@@ -66,4 +66,38 @@ test("served metadata distinguishes action variants, baseline and path restricti
   assert.match(schema.description,/without query strings or fragments/);
   assert.match(schema.properties.event_destinations.description,/No method\/path\/body\/headers/);
   assert.match(validateIntegrationTool.description,/configuration_rejected/);
+});
+
+test("native Codex field guesses get exact repair guidance without creating an attempt",async()=>{
+  const previous=globalThis.fetch;let calls=0;
+  globalThis.fetch=async()=>{calls++;throw new Error('No backend calls for invalid authoring');};
+  try {
+    const captured={...baseline,assertions:[baseline.assertion],observe:{method:'GET',path:'/orders/{{step1.id}}'}};
+    delete captured.assertion;delete captured.before;
+    const frozen=JSON.stringify(captured);
+    const rejected=await runValidateIntegration(input([captured]));
+    assert.equal(rejected.app_verified,false);
+    assert.equal(rejected.validation_errors[0].code,'application_check_fields');
+    assert.match(rejected.validation_errors[0].message,/assertion:\{all_of/);
+    assert.match(rejected.validation_errors[0].message,/do not invent/i);
+    assert.equal(JSON.stringify(captured),frozen);
+    const missing=await runValidateIntegration(input([{...baseline,before:[],observe:{method:'GET',path:'/orders'}}]));
+    assert.deepEqual(missing.validation_errors.map(e=>e.code),['application_check_object','application_observe_fields']);
+    assert.match(missing.validation_errors[0].message,/protected read-only adapter.*actual state/);
+    assert.equal(calls,0);
+  } finally {globalThis.fetch=previous;}
+});
+
+
+test("incomplete app result keeps the pending work and failing verdict through MCP", async () => {
+  const previous = globalThis.fetch;
+  const continuation = {required:true, continue_in_current_agent:true, preserve_check_ids:["baseline","restart","duplicate"], pending_checks:[{check_id:"restart",status:"unmeasured"},{check_id:"duplicate",status:"violated"}]};
+  globalThis.fetch = async () => new Response(JSON.stringify({suite:"application_workflow_v1", verdict:"failing", app_verified:false, complete:false, checks:[{id:"baseline",status:"held"},{id:"restart",status:"unmeasured"},{id:"duplicate",status:"violated"}], verification_continuation:continuation, manifest:{}, evidence:{trace:[]}}), {status:200,headers:{"content-type":"application/json"}});
+  try {
+    const result = await runValidateIntegration({session_id:"vs_test",run_id:"vr_test"});
+    assert.deepEqual(result.verification_continuation,continuation);
+    assert.equal(result.verdict,"failing");
+    assert.equal(result.app_verified,false);
+    assert.equal(result.checks.length,3);
+  } finally {globalThis.fetch=previous;}
 });

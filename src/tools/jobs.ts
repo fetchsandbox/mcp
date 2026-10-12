@@ -45,7 +45,7 @@ export function pendingJob(jobId: string, progress?: JobStatus): PendingJob {
 }
 export const getJobTool = {
   name: "get_job",
-  description: "Retrieve the SAME running find_bugs, fix_bug, prove_fix or verify_behavior job. Follow next_tool_call until status is done or error. Never restart the original tool to poll. A running response is not proof; only the completed measured verdict and receipt can establish a pass.",
+  description: "Retrieve the SAME running find_bugs, fix_bug, prove_fix, verify_behavior or validate_integration job (including requirements planning). Follow next_tool_call until status is done or error. Never restart the original tool to poll. A proposed plan is not execution proof; a running response is not proof. Only the completed measured verdict and receipt can establish a pass.",
   inputSchema: {type: "object", properties: {job_id: {type: "string", description: "Exact job_id returned by the original call."}}, required: ["job_id"], additionalProperties: false},
 } as const;
 export async function runGetJob(jobId: string): Promise<JobStatus> {

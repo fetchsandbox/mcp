@@ -1,4 +1,5 @@
 import { getJson, postJson, ToolError } from "../client.js";
+import { startAndPoll } from "./jobs.js";
 
 /**
  * Point the user's OWN app at a twin, then read what it did.
@@ -83,6 +84,25 @@ function applicationContractDiagnostics(config: Record<string, unknown>) {
   config.checks.forEach((check, index) => {
     if (!object(check) || check.unsupported_reason) return;
     const prefix = `application_config.checks[${index}]`;
+    const supported = ["id", "name", "actions", "observe", "assertion", "before", "fault", "observation_deadline_seconds"];
+    const unknown = Object.keys(check).filter(key => !supported.includes(key));
+    if (unknown.length) {
+      errors.push({path: prefix, code: "application_check_fields", message:
+        `Unsupported fields: ${unknown.join(", ")}. Executable checks use id, name, actions (array), before {path,assertion}, observe {path}, and assertion (one object). For multiple conditions use assertion:{all_of:[...assertion objects...]}, not assertions or assert. Do not drop intended conditions. No observation method or observe_path is accepted. Read real starting state before actions; do not invent it.`});
+      return;
+    }
+    for (const field of ["before", "observe", "assertion"] as const) {
+      if (!object(check[field])) {
+        errors.push({path: `${prefix}.${field}`, code: "application_check_object", message:
+          field === "before"
+            ? "before must be {path,assertion} for an independent GET of saved starting state. Baseline needs an empty fresh collection at the same path/selector as observe/assertion. If the app lacks a scoped read endpoint, add a protected read-only adapter over its actual state; never fabricate rows or an empty state."
+            : `${field} must be ${field === "observe" ? "{path} for a read-only GET" : "one assertion object; combine conditions with all_of:[...]"}. Retain the intended saved-state checks.`});
+      }
+    }
+    if (object(check.observe) && Object.keys(check.observe).some(key => key !== "path")) {
+      errors.push({path: `${prefix}.observe`, code: "application_observe_fields", message:
+        "observe accepts only {path}; the verifier performs a GET. Remove method, not the observation."});
+    }
     for (const field of ["before", "observe"] as const) {
       if (object(check[field])) pathCheck(check[field].path, `${prefix}.${field}.path`);
     }
@@ -90,10 +110,20 @@ function applicationContractDiagnostics(config: Record<string, unknown>) {
     check.actions.forEach((action, actionIndex) => {
       if (!object(action)) return;
       const path = `${prefix}.actions[${actionIndex}]`;
-      if (!("event" in action)) { pathCheck(action.path, `${path}.path`); return; }
-      if (Object.keys(action).some(key => !["event", "expect_status"].includes(key))) {
+      if (!("event" in action)) {
+        pathCheck(action.path, `${path}.path`);
+        if ("method" in action && "concurrency" in action &&
+            (typeof action.concurrency !== "number" || !Number.isInteger(action.concurrency) || action.concurrency < 1 || action.concurrency > 8)) {
+          errors.push({path: `${path}.concurrency`, code: "http_action_concurrency", message: "HTTP concurrency must be an integer from 1 to 8. All requests use the same body and prior step bindings; inspect each result and independently read application state."});
+        }
+        return;
+      }
+      if (Object.keys(action).some(key => !["event", "expect_status", "concurrency"].includes(key))) {
         errors.push({path, code: "signed_event_action_fields", message:
-          "A signed-event action accepts only event and optional expect_status. Remove method, path, body and headers from this action; put webhook routing in application_config.event_destinations. Do not replace it with method EVENT or disable signature verification."});
+          "A signed-event action accepts event, optional expect_status and bounded concurrency (an integer from 1 to 8). Remove method, path, body and headers from this action; put webhook routing in application_config.event_destinations. Do not replace it with method EVENT or disable signature verification."});
+      }
+      if ("concurrency" in action && (typeof action.concurrency !== "number" || !Number.isInteger(action.concurrency) || action.concurrency < 1 || action.concurrency > 8)) {
+        errors.push({path: `${path}.concurrency`, code: "signed_event_concurrency", message: "Event concurrency must be an integer from 1 to 8; retain the overlap check with a supported bound."});
       }
       const event = action.event;
       if (!object(event) || Object.keys(event).some(key => !["provider", "type", "payload", "replay_of"].includes(key))) {
@@ -115,12 +145,13 @@ function applicationContractDiagnostics(config: Record<string, unknown>) {
 export const validateIntegrationTool = {
   name: "validate_integration",
   description:
+    "Completion rule: a request to verify an app includes its applicable failure checks without another user prompt. When verification_continuation.required is true, continue in this agent: inspect pending_checks, preserve every declared check and its assertions, implement supported actions, and rerun a fresh attempt. Stop only with measured results or concrete blockers showing the missing capability and attempted evidence. Not run, not armed, and no observer yet are work to finish, not unsupported features. Do not clean up the session or present a final proof while actionable checks remain. Ask the owner only for genuinely missing business decisions, credentials or actions you cannot perform. " +
     "For a local app, start the actual app and call manage_tunnel with its port; use the returned app_base_url. No ngrok install is needed. The managed relay origin deliberately rejects direct browser/curl requests with 404; after configuration and credential installation, test connectivity with validate_integration preflight instead. Do not interpret that private-origin 404 as an app failure or expose relay credentials. Hosted builders use their published origin. Start with providers (and optional app_base_url), then reuse the returned session_id for application_context, fixtures and attempts. Do not include application_context in the initial session call. Inspect how the actual app or workflow executes before choosing a verification path. If the builder can run that workflow locally, bind its real provider clients to every returned twin URL and the supplied test authentication. Use the returned provider operation contracts to implement those clients; a missing canned workflow does not mean the provider lacks an API operation. The existing arm/probe path does not require a published app or webhook: select a probe from the returned matrix, call arm with session_id, send its request_headers on EVERY provider request across the session, execute the actual workflow entry point, then call probe with the same session_id and returned run_id. Independently assert saved app state in the host and report that evidence separately. Provider traffic alone remains app_verified:false; it does not establish application execution or state. Do not substitute a standalone simulation, direct twin calls or a curated workflow for the user's implementation. A public origin is required when FetchSandbox must drive or observe an HTTP application suite; the hosted setup instructions below apply to that path. " +
     "For hosted application_workflow_v1 apps, build and publish the disabled test adapter before requesting short-lived credentials. After installing the existing handoff and republishing, call preflight:true with session_id/run_id. A setup_blocked response is not a failed application test. Its next_tool_call is null: repair its exact host-side blocker first, then call resume_tool_call for the SAME run/preflight without rotating credentials. Do not poll an unchanged setup blocker. Execution has a separate deadline. Execution is already non-blocking: execute:true starts the existing backend job and returns running promptly. Use the SAME builder agent to follow status; no extra background helper or helper approval is needed. Never execute twice; retrieve status with session_id/run_id only. If the browser stops at a security challenge, immediately hand the owner the SAME run/order-verified original TEST checkout URL (livemode=false) while observation continues; never bypass the challenge, silently wait, create a replacement checkout or retry Pay. For an owner-assisted browser step, use ONE native question containing that verified URL, pause the builder for its answer while the backend job continues, and record that answer once. Do not keep working while asking for a plain chat reply that the host queues, or ask again after confirmation is recorded. Browser payments require an available browser or one explicit user action, and independently observed paid state; a click is not proof. After proof, remove only temporary settings, republish and verify disabled externally. " +
     "For every app, inspect capabilities, coverage_policy and application_actions. Review every supplied coverage dimension against inspected app behavior without waiting for the user to enumerate failure tests. Supply application_config.coverage_review with relevance, reason and linked check IDs when the builder authors the plan. Missing dimensions stay unreviewed. A dimension review is not execution proof; never claim all possible invariants are known. Prepare missing test products, prices and related records before failures: author fixtures using documented provider operations, include a final GET with an exact identity assertion, then configure the app with returned fixture IDs. The server uses the existing twin workflow runner and independently checks read-back. Fixture readiness is not app proof. Unsupported application checks must be reported explicitly, not replaced by a separate script or quickrun. " +
     "Use the returned fixture_authoring contract, not a web search for assertion syntax. Prepare fixtures before configuring any attempt. Fixture assertions are GET-only and contain select, equals (string), required:true, count:1. Use separate asserted GET steps for each additional value; do not use application all_of or where predicates in fixture assertions. Paddle selectors include the response envelope, e.g. data.id; Stripe uses id. Read the provided Paddle one-time-price example and adapt its product and amount to the app. If fixed receipt-suite transactions cannot match the app's product, price and pending order, do not execute them as app proof or a pointless rejection diagnostic. Report that compatibility gap, cancel any unexecuted mismatched attempt, then use application_workflow_v1 for supported checks while preserving untested receipt rules. " +
-    "After session creation, send session_id and application_context with the original goal and inspected workflow to obtain model-proposed rules, missing observations and fixture requirements. This planning action requires sign-in. Proposals are not executed checks. Preserve all proposed rules in the coverage report, even when unsupported. If server_requirements_model_available is false or planning returns requirements_model_unavailable, inspect the app and author the candidate contract with your own model; label it builder-proposed, not a FetchSandbox model result. Never wait for the human to write routine test requirements. " +
-    "For a Stripe app on a managed tunnel or published origin, use application_config.event_delivery=provider_lifecycle with the exact Stripe handler in event_destinations and require_verifier_token=true. Configuration creates a real subscription on this isolated Stripe twin via POST /v1/webhook_endpoints; the protected handoff supplies its returned signing secret. Drive the actual app purchase/payment entry point, confirm/capture its returned PaymentIntent, and observe saved order plus email effects. Keep payment and duplicate replay in separate checks: first confirm payment and poll independently saved paid order and receipt state; then GET the actual received success-event ID from app state and bind replay_of to that GET response. Never assume the payment response contains event_id or use the PaymentIntent ID as an event ID. If the app cannot expose a received event identity, retain replay as unmeasured and explain the missing observation. Synthetic event type/payload actions are refused in this mode; exact replay of a delivered run-correlated generated event is supported. Inspect webhook_subscriptions and recorded callback responses; missing delivery is inconclusive, never a pass. Other provider lifecycle registrations are not yet supported by this mode; existing hosted suites are unchanged. Local coding agents should call install_test_credentials after configuration to securely install temporary secrets using their MCP account key; do not call the browser receipt_secrets endpoint with an API key or print secret values. Hosted builders keep the existing owner browser handoff. For a normal HTTP app workflow with independently readable state, configure application_workflow_v1 and application_config. Declare a positive baseline first using ordinary HTTP app actions, no signed events, GET observations and required exact assertions. A pending order is a valid baseline; prove signed payment and access in a later check without removing those assertions. HTTP actions are {method,path,body?,expect_status?}; signed-event actions are ONLY {event:{provider,type,payload},expect_status?}, or {event:{provider,replay_of},expect_status?} for exact replay. Never combine event with method/path/body/headers or invent method EVENT. Webhook paths belong in event_destinations and MUST be the inspected app handler paths. Provider event names, resource envelopes, signing algorithm, raw request bytes and replay event identity must follow that provider. Do not invent a test webhook handler that replaces the real implementation; a protected setup/state adapter may expose isolated records but may not implement the behavior being tested. Managed relay URLs register verifier connectivity only, not a live-provider subscription. All action, before and observe paths must omit query strings and fragments, even run_id queries: use inspected protected path-segment routes and preserve run scoping. A configuration_rejected result identifies offending field paths; repair those fields in the SAME session before another configuration call. It is not an app test result and does not request credentials. Reuse the proposed rule IDs; omitted rules remain unmeasured. Signed callback app_response contains a sanitized acknowledgement; response remains delivery metadata. Inspect response_capture_status when the body is missing, and independently read state for the verdict. Signed provider event actions use isolated secure-handoff signing secrets; bind payload identity to actual app responses and verify saved state. No browser, arbitrary auth-header or SQL execution is supported by this HTTP contract: record those gaps explicitly. Do not weaken signature or access checks to make a test pass. " +
+    "After session creation, send session_id and application_context with the original goal and inspected workflow to obtain model-proposed rules, missing observations and fixture requirements. This planning action requires sign-in. Proposals are not executed checks. The app-owning agent authors the executable contract from inspected code and business scope. Server suggestions are advisory. Review every coverage dimension; declare relevant unsupported behavior explicitly and explain genuinely unrelated features as not_applicable. Omitted suggestions are retained separately and cannot add required checks. If server_requirements_model_available is false or planning returns requirements_model_unavailable, inspect the app and author the candidate contract with your own model; label it builder-proposed, not a FetchSandbox model result. Never wait for the human to write routine test requirements. " +
+    "For a Stripe app on a managed tunnel or published origin, use application_config.event_delivery=provider_lifecycle with the exact Stripe handler in event_destinations and require_verifier_token=true. Configuration creates a real subscription on this isolated Stripe twin via POST /v1/webhook_endpoints; the protected handoff supplies its returned signing secret. Drive the actual app purchase/payment entry point, confirm/capture its returned PaymentIntent, and observe saved order plus email effects. Keep payment and duplicate replay in separate checks: first confirm payment and poll independently saved paid order and receipt state; then GET the actual received success-event ID from app state and bind replay_of to that GET response. Never assume the payment response contains event_id or use the PaymentIntent ID as an event ID. If the app cannot expose a received event identity, retain replay as unmeasured and explain the missing observation. Synthetic event type/payload actions are refused in this mode; exact replay of a delivered or explicitly withheld run-correlated generated event is supported. Event actions accept concurrency from 1 to 8 for real overlapping deliveries. Use the returned provider_control and fault.evidence contracts to drive recorded fault recovery. Use fault.evidence=accepted_response_retry when the app recovers a lost accepted response inside its HTTP request or a successful webhook callback. It requires an observed client disconnect before a matching provider retry and the same accepted effect ID; simultaneous sends and a slow response cannot pass. accepted_response_loss remains the failed-callback plus redelivery contract. For a declared client_lifecycle restart, follow client_checkpoint by restarting the real app process with the same durable storage and bindings, then retrieve the same run without another execute. Inspect webhook_subscriptions and recorded callback responses; missing delivery is inconclusive, never a pass. Resend lifecycle can be configured alongside Stripe using its exact existing handler in event_destinations. Configuration calls the isolated Resend POST /webhooks with endpoint/events and supplies the returned Svix signing secret through FETCHSANDBOX_RESEND_WEBHOOK_SECRET; map it to the inspected app setting. The real email send emits email.sent, email.delivered or the armed native email failure event. Inspect the signed callback acknowledgement and independently saved email state; a send ID or HTTP 200 alone does not prove application handling. Other providers remain explicit lifecycle gaps; existing hosted suites are unchanged. Local coding agents should call install_test_credentials after configuration to securely install temporary secrets using their MCP account key; do not call the browser receipt_secrets endpoint with an API key or print secret values. Hosted builders keep the existing owner browser handoff. For a normal HTTP app workflow with independently readable state, configure application_workflow_v1 and application_config. Declare a positive baseline first using ordinary HTTP app actions, no signed events, GET observations and required exact assertions. A pending order is a valid baseline; prove signed payment and access in a later check without removing those assertions. HTTP actions are {method,path,body?,expect_status?,concurrency?}. concurrency from 1 to 8 sends the same inspected app request concurrently against frozen prior bindings; all statuses are checked. For concurrency greater than 1, the response slot is {results:[...]} in request declaration order: bind each actual identity with {{step1.results.0.id}}, {{step1.results.1.id}}, then independently GET saved state. Same input does not imply the same logical operation; use the app business contract to distinguish independent purchases from duplicate submission. Every concurrent request consumes the existing check/run action budget; signed-event actions are ONLY {event:{provider,type,payload},expect_status?}, or {event:{provider,replay_of},expect_status?} for exact replay. Never combine event with method/path/body/headers or invent method EVENT. Webhook paths belong in event_destinations and MUST be the inspected app handler paths. Provider event names, resource envelopes, signing algorithm, raw request bytes and replay event identity must follow that provider. Do not invent a test webhook handler that replaces the real implementation; a protected setup/state adapter may expose isolated records but may not implement the behavior being tested. Managed relay URLs register verifier connectivity only, not a live-provider subscription. All action, before and observe paths must omit query strings and fragments, even run_id queries: use inspected protected path-segment routes and preserve run scoping. A configuration_rejected result identifies offending field paths; repair those fields in the SAME session before another configuration call. It is not an app test result and does not request credentials. Reuse applicable proposed rule IDs when useful; only app-declared checks are binding. Do not drop a relevant failed check to obtain green. Signed callback app_response contains a sanitized acknowledgement; response remains delivery metadata. Inspect response_capture_status when the body is missing, and independently read state for the verdict. Signed provider event actions use isolated secure-handoff signing secrets; bind payload identity to actual app responses and verify saved state. No browser, arbitrary auth-header or SQL execution is supported by this HTTP contract: record those gaps explicitly. Do not weaken signature or access checks to make a test pass. " +
     "Start a validation session for the user's integration. " +
     "quickrun and run_workflow execute OUR curated workflow against a " +
     "twin — green there says the provider behaves as documented, and says " +
@@ -201,6 +232,66 @@ export const validateIntegrationTool = {
     "a supported Paddle-hosted flow. Verify browser checkout/payment separately " +
     "from twin API and webhook tests; transaction creation alone is not payment proof.",
   inputSchema: {
+    $defs: {
+  "applicationAssertion": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "select": {
+        "type": "string"
+      },
+      "equals": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "null"
+        ]
+      },
+      "contains": {
+        "type": "string"
+      },
+      "count": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "absent": {
+        "type": "boolean"
+      },
+      "required": {
+        "type": "boolean"
+      },
+      "repeat": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 5
+      },
+      "stable_under_repeat": {
+        "type": "boolean"
+      },
+      "set_equals": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "uniqueItems": true
+      },
+      "all_of": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/applicationAssertion"
+        }
+      },
+      "where": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/applicationAssertion"
+        }
+      }
+    },
+    "required": []
+  }
+},
     type: "object",
     properties: {
       providers: {
@@ -309,9 +400,309 @@ export const validateIntegrationTool = {
             type: "object", required: ["dimension", "relevance", "reason", "rule_ids"], additionalProperties: false,
             properties: {dimension: {type: "string"}, relevance: {type: "string", enum: ["relevant", "not_applicable", "unresolved"]}, reason: {type: "string"}, rule_ids: {type: "array", items: {type: "string"}}},
           }},
+          event_delivery: {type: "string", enum: ["direct", "provider_lifecycle"], description: "provider_lifecycle drives the actual Stripe subscription through the app payment entry point and requires exactly one Stripe destination. direct uses verifier-signed events."},
           event_destinations: {type: "object", additionalProperties: {type: "string"}, description: "Session-provider to same-origin webhook path without query/fragment. Requires require_verifier_token=true and the isolated FETCHSANDBOX_<PROVIDER>_WEBHOOK_SECRET from secure handoff. Complete signed action shape: {event:{provider,type,payload},expect_status:200}; exact replay: {event:{provider,replay_of:'{{step2.event_id}}'},expect_status:200}. No method/path/body/headers on signed actions. Baseline uses ordinary HTTP actions; signed events belong in later checks. Existing signature checks must remain enabled."},
           observation_seconds: {type: "number", minimum: 0.1, maximum: 5},
-          checks: {type: "array", minItems: 1, maxItems: 30, items: {type: "object"}},
+          checks: {
+  "type": "array",
+  "minItems": 1,
+  "maxItems": 30,
+  "items": {
+    "oneOf": [
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "name": {
+            "type": "string"
+          },
+          "unsupported_reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "unsupported_reason"
+        ]
+      },
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "name": {
+            "type": "string"
+          },
+          "actions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "method": {
+                      "type": "string",
+                      "enum": [
+                        "GET",
+                        "POST",
+                        "PUT",
+                        "PATCH",
+                        "DELETE"
+                      ]
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "body": {},
+                    "concurrency": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 8
+                    },
+                    "expect_status": {
+                      "type": "integer",
+                      "minimum": 200,
+                      "maximum": 599
+                    }
+                  },
+                  "required": [
+                    "method",
+                    "path"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "event": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "provider": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "type": "string"
+                            },
+                            "payload": {
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "type",
+                            "payload"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "provider": {
+                              "type": "string"
+                            },
+                            "replay_of": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "replay_of"
+                          ]
+                        }
+                      ]
+                    },
+                    "expect_status": {
+                      "type": "integer",
+                      "minimum": 200,
+                      "maximum": 599
+                    },
+                    "concurrency": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 8
+                    }
+                  },
+                  "required": [
+                    "event"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "delay_seconds": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "maximum": 5
+                    }
+                  },
+                  "required": [
+                    "delay_seconds"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "provider_control": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "provider": {
+                          "type": "string"
+                        },
+                        "scenario": {
+                          "type": "string",
+                          "enum": [
+                            "default"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "scenario"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "provider_control"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "client_lifecycle": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "operation": {
+                          "type": "string",
+                          "enum": [
+                            "restart"
+                          ]
+                        },
+                        "observe_path": {
+                          "type": "string"
+                        },
+                        "identity_field": {
+                          "type": "string"
+                        },
+                        "timeout_seconds": {
+                          "type": "number",
+                          "minimum": 1,
+                          "maximum": 180
+                        }
+                      },
+                      "required": [
+                        "operation",
+                        "observe_path",
+                        "identity_field",
+                        "timeout_seconds"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "client_lifecycle"
+                  ]
+                }
+              ]
+            }
+          },
+          "before": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "assertion": {
+                "$ref": "#/$defs/applicationAssertion"
+              }
+            },
+            "required": [
+              "path",
+              "assertion"
+            ]
+          },
+          "observe": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ]
+          },
+          "assertion": {
+            "$ref": "#/$defs/applicationAssertion"
+          },
+          "fault": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "scenario": {
+                "type": "string"
+              },
+              "evidence": {
+                "type": "string",
+                "enum": [
+                  "refusal",
+                  "accepted_response_loss",
+                  "accepted_response_retry",
+                  "webhook_withheld"
+                ]
+              },
+              "event_type": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "scenario"
+            ]
+          },
+          "observation_deadline_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 180
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "actions",
+          "before",
+          "observe",
+          "assertion"
+        ]
+      }
+    ]
+  }
+},
         },
       },
     },
@@ -368,7 +759,7 @@ export async function runValidateIntegration(
       message_for_user: "This configuration was not sent to the backend. No application action ran and this call created no attempt or credentials. Repair the indicated fields in the same session; retain all intended checks and safety guards.",
     };
   }
-  const result = await postJson<Record<string, unknown>>("/api/mcp/validate_integration", {
+  const body = {
     providers: input.providers ?? [],
     app_base_url: input.app_base_url ?? "",
     session_id: input.session_id ?? null,
@@ -384,7 +775,16 @@ export async function runValidateIntegration(
     fixtures: input.fixtures ?? null,
     application_context: input.application_context ?? null,
     application_config: input.application_config ?? null,
-  });
+  };
+  if (input.application_context) {
+    // Reuse the existing job owner. A planner completion can outlive both
+    // the default HTTP deadline and hosted clients' tool response budgets.
+    // startAndPoll submits once, then returns the same get_job continuation.
+    const plan = await startAndPoll("/api/mcp/validate_integration",
+      {...body, async_job: true}, {maxMs: 20_000});
+    return {...plan, coordination_guidance: coordinationGuidance};
+  }
+  const result = await postJson<Record<string, unknown>>("/api/mcp/validate_integration", body);
   // A short backend job poll does not make the enclosing MCP HTTP request
   // short. Recovery suites outlive its 90-second deadline. Return readiness
   // promptly and let the caller retrieve this same session, never re-execute.
@@ -394,6 +794,10 @@ export async function runValidateIntegration(
   if (completed.status === "running" && hasSession && !input.execute && !input.arm && !input.probe && !input.cancel && !input.suite) {
     await new Promise(resolve => setTimeout(resolve, 10_000));
     completed = await postJson<Record<string, unknown>>("/api/mcp/validate_integration", {session_id: input.session_id, ...(input.run_id ? {run_id: input.run_id} : {})});
+  }
+  if (completed.status === "running" && hasSession && completed.client_checkpoint) {
+    return {...completed, coordination_guidance: coordinationGuidance, step: "native_restart_required",
+      app_verified: false, message_for_user: "The verifier is waiting for a real app process restart. Follow client_checkpoint using the same storage and temporary provider settings, then retrieve this same run. Do not execute another suite or imitate restart with an HTTP route."};
   }
   if (completed.status === "running" && hasSession) {
     return {...completed, coordination_guidance: coordinationGuidance, session_id: input.session_id, run_id: input.run_id ?? completed.run_id,

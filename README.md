@@ -17,8 +17,7 @@ first and stopped after. You get a receipt URL either way.
 
 ## Install
 
-Same stdio command everywhere. `npx` fetches the current version, so there's
-nothing to install.
+The MCP server runs locally through Node.js. Clients can resolve `npx` differently; Cursor on Mac may need the full path from `command -v npx`.
 
 ```json
 {
@@ -43,6 +42,32 @@ See [Accounts](#accounts).
 | Cursor | `~/.cursor/mcp.json`, or `.cursor/mcp.json` in the repo |
 | Zed | `~/.config/zed/settings.json`, under `context_servers` |
 | Codex | `~/.codex/config.toml`, as `[mcp_servers.fetchsandbox]` |
+
+### Cursor on Mac: tested setup
+
+Get a real account key from https://fetchsandbox.com/keys. Run `command -v npx`
+and use that full path in `~/.cursor/mcp.json`. This example is for Homebrew
+on Apple Silicon; replace the path if yours differs. On Windows, use
+`where.exe npx` to locate your installed command.
+
+```json
+{
+  "mcpServers": {
+    "fetchsandbox": {
+      "command": "/opt/homebrew/bin/npx",
+      "args": ["-y", "fetchsandbox-mcp@0.7.24"],
+      "env": { "FETCHSANDBOX_API_KEY": "fsk_your_key_here" }
+    }
+  }
+}
+```
+
+Replace `fsk_your_key_here` privately with the real raw key, without a Bearer
+prefix. The placeholder cannot authenticate. Check for a second FetchSandbox
+entry in `.cursor/mcp.json` in your project. Fully quit and reopen Cursor after
+saving; a window reload may retain the old MCP process. Enable the server if
+needed and confirm its tools load. A green connection alone does not prove
+that an application verification call is authenticated.
 
 Restart the client afterwards. Anything else that speaks MCP takes the same
 command and args.
