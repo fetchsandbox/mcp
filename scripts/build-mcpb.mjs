@@ -112,13 +112,11 @@ const manifest = {
   description: pkg.description,
     tools: tools.map((t) => ({ name: t.name, description: t.description })),
   long_description:
-    "FetchSandbox runs your integration against every service it touches with " +
-    "failures injected on purpose — retried webhooks, declined cards, rate " +
-    "limits, auth errors.\n\nWhen it finds a bug it can propose a fix and then " +
-    "prove it: the same failure is run against your code before and after the " +
-    "diff. Green only if it reproduced first and stopped after. You get a " +
-    "receipt URL either way.\n\nNo account is required to start. Signing in is " +
-    "optional and takes about twenty seconds.",
+    "Use FetchSandbox from a coding agent to validate the app's declared " +
+    "behavior and inspect a shareable receipt. Discovery tools can load " +
+    "without an account key. Application planning, verification and managed " +
+    "local tunnels require authentication. Receipt outcomes identify passed, " +
+    "failed and unmeasured checks within the agreed scope.",
   author: { name: "FetchSandbox", url: "https://fetchsandbox.com" },
   homepage: pkg.homepage ?? "https://fetchsandbox.com",
   documentation: "https://github.com/fetchsandbox/mcp#readme",
@@ -142,8 +140,8 @@ const manifest = {
       type: "string",
       title: "API key (optional)",
       description:
-        "Leave blank to run anonymously. Sign in later at fetchsandbox.com/device " +
-        "to keep receipts and get your own rate limit.",
+        "Discovery is available without a key. Application planning, verification " +
+        "and managed local tunnels require an account key from fetchsandbox.com/keys.",
       sensitive: true,
       required: false,
     },
