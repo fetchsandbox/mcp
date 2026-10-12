@@ -55,3 +55,13 @@ test('schema exposes bounded HTTP overlap without accepting mixed event actions'
   }
   assert.match(validateIntegrationTool.description,/step1.results.0.id/);
 });
+
+test('workflow lifecycle selection carries catalog ids without allowing invented profile objects',()=>{
+  const request=input([baseline]);
+  request.application_config.event_delivery='provider_lifecycle';
+  request.application_config.event_destinations={stripe:'/stripe-webhook'};
+  request.application_config.provider_lifecycle_workflows={stripe:'create_and_send_invoice'};
+  assert.equal(validate(request).valid,true);
+  request.application_config.provider_lifecycle_workflows.stripe={witness_events:['made.up']};
+  assert.equal(validate(request).valid,false);
+});
