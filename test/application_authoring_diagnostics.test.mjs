@@ -101,3 +101,15 @@ test("incomplete app result keeps the pending work and failing verdict through M
     assert.equal(result.checks.length,3);
   } finally {globalThis.fetch=previous;}
 });
+
+test('qualified requester input and provider observations reach the backend unchanged',async()=>{
+  const previous=globalThis.fetch;const calls=[];
+  globalThis.fetch=async(_url,options)=>{calls.push(JSON.parse(options.body));return new Response(JSON.stringify({run_id:'vr_contract',app_verified:false}),{status:200,headers:{'content-type':'application/json'}});};
+  try {
+    const check={...baseline,id:'requester_reply',actions:[baseline.actions[0],{provider_input:{provider:'zendesk',method:'PUT',path:'/api/v2/tickets/2001.json',body:{ticket:{comment:{body:'2',public:true,author_id:1001}}}}}],provider_assertions:[{provider:'zendesk',collection:'simulated_email_deliveries',assertion:{select:'records[*]',count:1,required:true}}]};
+    const request=input([baseline,check]);
+    const response=await runValidateIntegration(request);
+    assert.notEqual(response.status,'configuration_rejected');assert.equal(calls.length,1);
+    assert.deepEqual(calls[0].application_config,request.application_config);
+  } finally {globalThis.fetch=previous;}
+});

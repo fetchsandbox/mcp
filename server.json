@@ -17,12 +17,12 @@
     "url": "https://github.com/fetchsandbox/mcp",
     "source": "github"
   },
-  "version": "0.7.28",
+  "version": "0.7.29",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "fetchsandbox-mcp",
-      "version": "0.7.28",
+      "version": "0.7.29",
       "transport": {
         "type": "stdio"
       },

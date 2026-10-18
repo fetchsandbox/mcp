@@ -86,3 +86,13 @@ test('fixture discovery stays in the existing authenticated MCP session',()=>{
   assert.equal(validate({session_id:'vs_owned',inspect:{provider:'paddle',resource:'state',limit:101}}).valid,false);
   assert.equal(validate({session_id:'vs_owned',inspect:{provider:'paddle',resource:'state',sandbox_id:'someone_else'}}).valid,false);
 });
+
+test('provider evidence and requester input retain distinct typed contracts',()=>{
+  const check={...baseline,id:'customer_reply',actions:[baseline.actions[0],{provider_input:{provider:'zendesk',method:'PUT',path:'/api/v2/tickets/2001.json',body:{ticket:{comment:{body:'2',public:true,author_id:1001}}}}}],provider_assertions:[{provider:'zendesk',collection:'simulated_email_deliveries',assertion:{select:'records[*]',count:1,required:true}}]};
+  assert.equal(validate(input([baseline,check])).valid,true);
+  check.actions[1].provider_input.provider='zendesk';check.actions[1].method='PUT';
+  assert.equal(validate(input([baseline,check])).valid,false,'provider input cannot masquerade as an app request');
+  delete check.actions[1].method;
+  check.provider_assertions[0].unexpected='unsafe';
+  assert.equal(validate(input([baseline,check])).valid,false);
+});

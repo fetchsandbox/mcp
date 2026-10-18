@@ -86,7 +86,7 @@ function applicationContractDiagnostics(config: Record<string, unknown>) {
   config.checks.forEach((check, index) => {
     if (!object(check) || check.unsupported_reason || check.blocker) return;
     const prefix = `application_config.checks[${index}]`;
-    const supported = ["id", "name", "actions", "observe", "assertion", "before", "fault", "observation_deadline_seconds"];
+    const supported = ["id", "name", "actions", "observe", "assertion", "before", "fault", "observation_deadline_seconds", "provider_assertions"];
     const unknown = Object.keys(check).filter(key => !supported.includes(key));
     if (unknown.length) {
       errors.push({path: prefix, code: "application_check_fields", message:
@@ -365,7 +365,7 @@ export const validateIntegrationTool = {
           method: {type: "string"}, path: {type: "string"}}},
       fixtures: {
         type: "object", required: ["id", "steps"], additionalProperties: false,
-        description: "Prepare session-owned twin data before app tests. Requires session_id. Stable id makes repeated calls replay-safe. Every step names spec, method and relative path. Use {{step1.id}} for dependencies. End with GET and an exact identity assertion. No live provider calls.",
+        description: "Prepare session-owned twin data before app tests. Requires session_id. Stable id makes repeated calls replay-safe. Every step names spec, method and relative path. Use {{step1.id}} for dependencies. End with GET and an exact identity assertion. No live provider calls. An explicitly advertised /__fetchsandbox/fixtures/time step is an owner-only synthetic clock control, not a provider API; it is unavailable during active attempts and requires normal provider GET readback.",
         properties: {
           id: {type: "string", minLength: 1, maxLength: 100},
           steps: {
@@ -533,12 +533,27 @@ export const validateIntegrationTool = {
           "name": {
             "type": "string"
           },
+          "provider_assertions": {
+            "type": "array", "maxItems": 8,
+            "description": "Additional independent state assertions against this session's provider twins. Select records[*] from a public collection; readbacks are recorded separately from app-reported state. This is simulated provider state, not live-provider delivery.",
+            "items": {"type": "object", "additionalProperties": false,
+              "required": ["provider", "collection", "assertion"],
+              "properties": {"provider": {"type": "string"}, "collection": {"type": "string"},
+                "assertion": {"type": "object"}}}
+          },
           "actions": {
             "type": "array",
             "minItems": 1,
             "maxItems": 20,
             "items": {
               "oneOf": [
+                {"type": "object", "additionalProperties": false,
+                 "required": ["provider_input"],
+                 "description": "Qualified external requester input, separate from app execution. Zendesk supports a public comment by that ticket's requester; arbitrary financial writes are refused.",
+                 "properties": {"expect_status": {"type": "integer", "enum": [200]},
+                   "provider_input": {"type": "object", "additionalProperties": false,
+                     "required": ["provider", "method", "path", "body"],
+                     "properties": {"provider": {"type": "string"}, "method": {"type": "string"}, "path": {"type": "string"}, "body": {"type": "object"}}}}},
                 {
                   "type": "object",
                   "additionalProperties": false,
