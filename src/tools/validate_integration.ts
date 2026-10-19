@@ -549,11 +549,11 @@ export const validateIntegrationTool = {
               "oneOf": [
                 {"type": "object", "additionalProperties": false,
                  "required": ["provider_input"],
-                 "description": "Qualified external requester input, separate from app execution. Zendesk supports a public comment by that ticket's requester; arbitrary financial writes are refused.",
+                 "description": "Qualified external input, recorded separately from app execution. Requester is the default (Zendesk public reply). Explicit external_operator permits only configured twin operations, such as an independent refund or new subscription between app actions. It cannot replace app execution or count as an app effect.",
                  "properties": {"expect_status": {"type": "integer", "enum": [200]},
                    "provider_input": {"type": "object", "additionalProperties": false,
                      "required": ["provider", "method", "path", "body"],
-                     "properties": {"provider": {"type": "string"}, "method": {"type": "string"}, "path": {"type": "string"}, "body": {"type": "object"}}}}},
+                     "properties": {"actor": {"type": "string", "enum": ["requester", "external_operator"]}, "provider": {"type": "string"}, "method": {"type": "string"}, "path": {"type": "string"}, "body": {"type": "object"}}}}},
                 {
                   "type": "object",
                   "additionalProperties": false,

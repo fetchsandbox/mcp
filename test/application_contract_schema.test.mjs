@@ -96,3 +96,10 @@ test('provider evidence and requester input retain distinct typed contracts',()=
   check.provider_assertions[0].unexpected='unsafe';
   assert.equal(validate(input([baseline,check])).valid,false);
 });
+
+test('external operator input is explicit and preserves ordinary application actions',()=>{
+  const check={...baseline,id:'operator_race',actions:[baseline.actions[0],{provider_input:{actor:'external_operator',provider:'stripe',method:'POST',path:'/v1/refunds',body:{charge:'ch_fixture'}}},baseline.actions[0]]};
+  assert.equal(validate(input([baseline,check])).valid,true);
+  check.actions[1].provider_input.actor='pretend_app';
+  assert.equal(validate(input([baseline,check])).valid,false);
+});
