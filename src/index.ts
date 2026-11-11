@@ -344,7 +344,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           result = await runInstallTestCredentials({session_id: String(a.session_id), run_id: String(a.run_id), env_mapping: a.env_mapping as Record<string, string> | undefined});
           break;
         case manageTunnelTool.name:
-          result = await runManageTunnel({action: String(a.action), port: typeof a.port === "number" ? a.port : undefined});
+          result = await runManageTunnel({action: String(a.action), port: typeof a.port === "number" ? a.port : undefined, ttl_seconds: typeof a.ttl_seconds === "number" ? a.ttl_seconds : undefined});
           break;
         case validateIntegrationTool.name:
           result = await runValidateIntegration({
