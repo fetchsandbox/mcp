@@ -12,14 +12,18 @@ These requirements also apply to the public mirror:
 3. Publish through the existing `publish-registry.yml` workflow and verify both
    the official registry version and nested npm version. A successful dispatch
    alone is not proof of publication.
-4. Smithery is a frozen bundle, not an automatic npm update. For EVERY release,
+4. A frozen MCPB bundle is not an automatic npm update. For EVERY release,
    run `npm run mcpb`, inspect the packed manifest version, authentication text,
    tool input schemas and annotations, then start the unpacked bundle and call
    MCP initialize/tools/list. Confirm its JavaScript matches the npm artifact.
-   Publish with `smithery mcp publish ./fetchsandbox-mcp.mcpb -n fetchsandbox/mcp`.
-   Verify SUCCESS, the new deployment/bundle ID, and the actual public tool list.
    Derive expected tools from the running bundle; do not freeze a tool count.
    Local and hosted transports intentionally have different advertised tool sets.
+   Smithery retired its publishing API/CLI on October 31, 2026 (verified November
+   11 at https://www.smithery.ai/future; the update endpoint returns403,
+   "Updating servers has been removed"). Do not retry that retired publisher,
+   expand tokens to work around it, or claim its old deployment was updated.
+   Record the legacy distribution as retired; assess a supported directory
+   submission separately if one becomes available.
 5. Glama: Sync Server under Repository, verify the fetched commit, then Build &
    Release under Dockerfile. Verify the actual test result and released version.
    Record external builder failures as blocked, never as a passed release.
