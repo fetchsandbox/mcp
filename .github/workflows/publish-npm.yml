@@ -1,0 +1,104 @@
+name: Publish npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full commit SHA in fetchsandbox/mcp containing the tested release
+        required: true
+        type: string
+      version:
+        description: Exact unpublished package version
+        required: true
+        type: string
+      publish:
+        description: Publish after all validation gates pass
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Validate immutable source
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+
+      - name: Require npm OIDC support and matching metadata
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import {execFileSync} from 'node:child_process';
+          const npm = execFileSync('npm', ['--version'], {encoding:'utf8'}).trim().split('.').map(Number);
+          if (npm[0] < 11 || (npm[0] === 11 && (npm[1] < 5 || (npm[1] === 5 && npm[2] < 1)))) throw Error('npm >=11.5.1 required');
+          const pkg = JSON.parse(fs.readFileSync('package.json'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json'));
+          const server = JSON.parse(fs.readFileSync('server.json'));
+          const version = process.env.RELEASE_VERSION;
+          if (pkg.name !== 'fetchsandbox-mcp' || !/^\d+\.\d+\.\d+$/.test(version)) throw Error('Unexpected package/version');
+          const versions = [pkg.version, lock.version, lock.packages[''].version, server.version, ...server.packages.filter(p => p.registryType === 'npm').map(p => p.version)];
+          if (versions.length < 5 || versions.some(v => v !== version)) throw Error('Release metadata disagrees');
+          if (pkg.repository.url !== 'git+https://github.com/fetchsandbox/mcp.git') throw Error('Repository mismatch');
+          JS
+
+      - run: npm ci
+      - run: npm test
+      - name: Pack tested source
+        run: npm pack --json > npm-pack.json
+
+      - name: Require unpublished version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node --input-type=module <<'JS'
+          const response = await fetch(`https://registry.npmjs.org/fetchsandbox-mcp/${process.env.RELEASE_VERSION}`);
+          if (response.status !== 404) throw Error(`Expected absent version, received HTTP ${response.status}`);
+          JS
+
+      - name: Publish with GitHub OIDC
+        if: inputs.publish
+        env:
+          NODE_AUTH_TOKEN: ''
+        run: npm publish --access public --provenance
+
+      - name: Verify served version
+        if: inputs.publish
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          test "$(npm view "fetchsandbox-mcp@$RELEASE_VERSION" version)" = "$RELEASE_VERSION"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: npm-release-evidence
+          path: |
+            npm-pack.json
+            fetchsandbox-mcp-*.tgz
+          if-no-files-found: ignore
