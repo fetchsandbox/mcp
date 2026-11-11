@@ -16,6 +16,11 @@ on:
         default: false
         type: boolean
 
+      verify_published:
+        description: Verify an already accepted version without uploading again
+        default: false
+        type: boolean
+
 permissions:
   contents: read
 
@@ -73,6 +78,7 @@ jobs:
         run: npm pack --json > npm-pack.json
 
       - name: Require unpublished version
+        if: inputs.publish
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
@@ -88,11 +94,23 @@ jobs:
         run: npm publish --access public --provenance
 
       - name: Verify served version
-        if: inputs.publish
+        if: inputs.publish || inputs.verify_published
         env:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          test "$(npm view "fetchsandbox-mcp@$RELEASE_VERSION" version)" = "$RELEASE_VERSION"
+          node --input-type=module <<'JS'
+          const version = process.env.RELEASE_VERSION;
+          for (let attempt = 1; attempt <= 30; attempt++) {
+            const response = await fetch(`https://registry.npmjs.org/fetchsandbox-mcp/${version}`, {headers: {'cache-control': 'no-cache'}, signal: AbortSignal.timeout(15000)});
+            if (response.ok && (await response.json()).version === version) {
+              console.log(`Verified npm serves fetchsandbox-mcp@${version}`);
+              process.exit(0);
+            }
+            console.log(`Availability attempt ${attempt}/30: HTTP ${response.status}. npm may still be validating the accepted upload.`);
+            if (attempt < 30) await new Promise(resolve => setTimeout(resolve, 10000));
+          }
+          throw Error('Version remains unavailable. Inspect npm validation status; do not repeat an accepted upload.');
+          JS
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
