@@ -403,8 +403,25 @@ export const validateIntegrationTool = {
         type: "object", required: ["app_version", "disposable_test_app", "checks"], additionalProperties: false,
         description: "Frozen HTTP app drive/read-back contract: 1-30 checks, 1-20 actions per executable check, at most 300 declared actions in total, below 64 KiB. Preserve intermediate reads within these bounds; do not silently remove them. First check id=baseline must establish success. Checks require id, name, before {path,assertion}, ordinary HTTP actions [{method,path,body?,expect_status?}] or signed-event actions [{event:{provider,type,payload},expect_status?}], observe {path}, and assertion using select/equals/count/required or all_of. where and all_of must be lists of assertion objects, not field maps. equals accepts JSON strings, numbers, booleans and null; numeric/boolean literals preserve type, and null must be a present null field. Stripe event.payload is only the resource inside data.object, never a full event or a data.object wrapper: the server constructs and signs the envelope. Optional per-check observation_deadline_seconds (0-180, repeat=1 only) records bounded polling for eventual saved state; it does not drive a browser or turn a timeout into a pass. Every check first reads its declared starting-state precondition. Baseline requires count=0 on the same observed collection, with no where filter. Use {{run_id}} to scope fresh synthetic records. All paths are app-relative without query strings or fragments, including non-secret run_id queries; preserve run scoping through an inspected protected path-segment observer. Baseline permits only ordinary HTTP actions without signed events; prove signed purchase/access in later checks. Do not combine event actions with method/path/body/headers. {{step1.id}} binds a real action response to read-back. assertion.repeat (1-5) and stable_under_repeat support replay. Optional fault {provider,scenario} requires independently recorded provider refusal. For reassess/recontract include scope_review for every candidate check. Outside-scope feature proposals contain id,name,unsupported_reason only and move to separate scope_exclusions; they are not required tests. In-scope missing work uses id,name,blocker {category,reason,evidence,...}, never a free-text unsupported reason. engine_unsupported requires a capability confirmed by current backend capabilities; a missing app route or observer is not an engine gap. Unresolved policy remains unmeasured. Legacy untyped reasons remain unclassified, not engine unsupported. No user-supplied credentials, auth headers or live data. require_verifier_token=true generates an owner-only temporary Bearer token through secure handoff for protected test endpoints.",
         properties: {
+          execution_binding: {
+            type: "object", additionalProperties: false,
+            description: "Optional pilot binding for per-input runtime rehearsal. Declared identities, not source attestation or production authorization. Frozen into the existing receipt. All six fields are required when supplied.",
+            required: ["execution_id", "workflow_version", "contract_digest", "input_digest", "config_digest", "state_digest"],
+            properties: {
+              execution_id: {type: "string", pattern: "^[a-zA-Z0-9_-]{1,100}$"},
+              workflow_version: {type: "string", minLength: 1, maxLength: 200},
+              contract_digest: {type: "string", pattern: "^[a-f0-9]{64}$"},
+              input_digest: {type: "string", pattern: "^[a-f0-9]{64}$"},
+              config_digest: {type: "string", pattern: "^[a-f0-9]{64}$"},
+              state_digest: {type: "string", pattern: "^[a-f0-9]{64}$"},
+            },
+          },
           app_version: {type: "string"}, disposable_test_app: {type: "boolean", enum: [true]},
           require_verifier_token: {type: "boolean"},
+          application_clock: {type: "object", additionalProperties: false,
+            required: ["advance_path", "observe_path"],
+            description: "Optional isolated application test clock, protected by the verifier token. GET observe_path returns run_id and now_epoch_seconds; POST advance_path receives run_id and advance_seconds. Requires actual app implementation; does not control hosted vendor clocks or prove real scheduler timing.",
+            properties: {advance_path: {type: "string"}, observe_path: {type: "string"}}},
           coverage_review: {type: "array", maxItems: 17, description: "Applicability review against the returned coverage_policy. Missing dimensions remain unreviewed. Link relevant dimensions to declared checks, including explicitly unsupported checks. This is a proposed review, not execution proof.", items: {
             type: "object", required: ["dimension", "relevance", "reason", "rule_ids"], additionalProperties: false,
             properties: {dimension: {type: "string"}, relevance: {type: "string", enum: ["relevant", "not_applicable", "unresolved"]}, reason: {type: "string"}, rule_ids: {type: "array", items: {type: "string"}}},
@@ -689,6 +706,8 @@ export const validateIntegrationTool = {
                     "provider_control"
                   ]
                 },
+                {type: "object", additionalProperties: false, required: ["advance_time"],
+                 properties: {advance_time: {type: "number", exclusiveMinimum: 0, maximum: 31622400}}},
                 {
                   "type": "object",
                   "additionalProperties": false,

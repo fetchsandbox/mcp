@@ -104,7 +104,13 @@ export async function pollJob(
     try {
       st = await getJson<JobStatus>(`/api/mcp/jobs/${jobId}`, {timeoutMs: Math.max(1, deadline - Date.now())});
     } catch (error) {
-      if (Date.now() >= deadline) {
+      // Node's abort timer may fire just before the wall-clock deadline is
+      // rounded forward. This is still exhaustion of this read's response
+      // budget, not a failed backend job or permission to start another one.
+      const boundedReadTimeout = budget < maxMs && error instanceof ToolError
+        && error.message.startsWith("Request timed out after ")
+        && error.message.endsWith(`ms: GET /api/mcp/jobs/${jobId}`);
+      if (Date.now() >= deadline || boundedReadTimeout) {
         if (budget < maxMs) return {...pendingJob(jobId, progress), poll_read_timed_out: true};
         break;
       }

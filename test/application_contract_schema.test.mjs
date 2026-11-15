@@ -103,3 +103,16 @@ test('external operator input is explicit and preserves ordinary application act
   check.actions[1].provider_input.actor='pretend_app';
   assert.equal(validate(input([baseline,check])).valid,false);
 });
+
+test('isolated application clock controls have one explicit bounded schema',()=>{
+  const request=input([baseline,{...baseline,id:'expiry',actions:[{advance_time:604800}]}]);
+  request.application_config.require_verifier_token=true;
+  request.application_config.application_clock={advance_path:'/verify/clock/advance',observe_path:'/verify/clock'};
+  assert.equal(validate(request).valid,true);
+  for(const value of [-1,0,true,'604800',31622401]) {
+    request.application_config.checks[1].actions[0].advance_time=value;
+    assert.equal(validate(request).valid,false);
+  }
+  request.application_config.checks[1].actions[0]={advance_time:60,method:'POST',path:'/extra'};
+  assert.equal(validate(request).valid,false);
+});
