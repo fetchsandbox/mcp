@@ -116,3 +116,13 @@ test('isolated application clock controls have one explicit bounded schema',()=>
   request.application_config.checks[1].actions[0]={advance_time:60,method:'POST',path:'/extra'};
   assert.equal(validate(request).valid,false);
 });
+
+test('received fixtures are explicit inputs and fit a separate bounded control allowance',()=>{
+  const fixture={provider_input:{actor:'fixture',provider:'gmail',method:'POST',path:'/__fetchsandbox/fixtures/record',body:{resource:'messages',profile:'received_message',record:{id:'received'}}}};
+  const check={...baseline,actions:[...Array.from({length:20},()=>baseline.actions[0]),...Array.from({length:8},()=>fixture)]};
+  assert.equal(validate(input([check])).valid,true);
+  check.actions.push(fixture);
+  assert.equal(validate(input([check])).valid,false);
+  check.actions=[baseline.actions[0],{...fixture,method:'POST'}];
+  assert.equal(validate(input([check])).valid,false,'a fixture cannot masquerade as an application request');
+});

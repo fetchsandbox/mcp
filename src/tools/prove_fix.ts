@@ -107,6 +107,8 @@ export async function runProveFix(input: ProveFixInput): Promise<{
    * Declared or tsc drops it.
    */
   cannot_run?: string;
+  stub_backed?: boolean;
+  stub_backed_note?: string;
   /**
    * The backend's instruction to the AGENT reading this result — the lever that
    * stops an autonomous agent writing its own ungated harness and reporting a
@@ -165,6 +167,8 @@ export async function runProveFix(input: ProveFixInput): Promise<{
     verified: raw.verified as boolean | undefined,
     reason: raw.reason as string | undefined,
     cannot_run: raw.cannot_run as string | undefined,
+    stub_backed: raw.stub_backed === true,
+    stub_backed_note: raw.stub_backed_note as string | undefined,
     agent_guidance: raw.agent_guidance as string | undefined,
     scenario: raw.scenario,
     receipt_url: raw.receipt_url as string | undefined,
