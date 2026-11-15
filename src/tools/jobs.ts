@@ -33,6 +33,23 @@ export interface PendingJob {
   agent_guidance: string;
   elapsed_s?: number;
   job_kind?: string;
+  execution_progress?: ReturnType<typeof safeExecutionProgress>;
+}
+function safeExecutionProgress(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const v = value as Record<string, unknown>;
+  const id = (x: unknown): x is string => typeof x === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(x);
+  const count = (x: unknown): x is number => typeof x === "number" && Number.isSafeInteger(x) && x >= 0 && x <= 2000;
+  if (!id(v.run_id) || !id(v.session_id) || !count(v.completed_actions) || v.automatic_resume_available !== false) return undefined;
+  let uncertain_action = null;
+  if (v.uncertain_action !== null) {
+    if (!v.uncertain_action || typeof v.uncertain_action !== "object") return undefined;
+    const a = v.uncertain_action as Record<string, unknown>;
+    if (!id(a.scenario_id) || !count(a.repeat) || !count(a.action_index)) return undefined;
+    uncertain_action = {scenario_id: a.scenario_id, repeat: a.repeat, action_index: a.action_index};
+  }
+  return {run_id: v.run_id, session_id: v.session_id, completed_actions: v.completed_actions,
+    uncertain_action, automatic_resume_available: false as const};
 }
 export function pendingJob(jobId: string, progress?: JobStatus): PendingJob {
   const elapsed = progress?.elapsed_s;
@@ -41,6 +58,7 @@ export function pendingJob(jobId: string, progress?: JobStatus): PendingJob {
   return {status: "running", job_id: jobId,
     next_tool_call: {name: "get_job", arguments: {job_id: jobId}},
     ...facts,
+    ...(safeExecutionProgress(progress?.execution_progress) ? {execution_progress: safeExecutionProgress(progress?.execution_progress)} : {}),
     agent_guidance: "No completed result has been received for this SAME backend job. Call get_job with this job_id until done. Do not start another job, apply the proposed fix, or claim a pass while awaiting its result. Only elapsed_s is measured elapsed time; do not infer a timeout from poll count or model estimates."};
 }
 export const getJobTool = {

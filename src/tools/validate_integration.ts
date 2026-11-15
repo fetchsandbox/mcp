@@ -561,7 +561,7 @@ export const validateIntegrationTool = {
           "actions": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 20,
+            "maxItems": 28,
             "items": {
               "oneOf": [
                 {"type": "object", "additionalProperties": false,
@@ -570,7 +570,7 @@ export const validateIntegrationTool = {
                  "properties": {"expect_status": {"type": "integer", "enum": [200]},
                    "provider_input": {"type": "object", "additionalProperties": false,
                      "required": ["provider", "method", "path", "body"],
-                     "properties": {"actor": {"type": "string", "enum": ["requester", "external_operator"]}, "provider": {"type": "string"}, "method": {"type": "string"}, "path": {"type": "string"}, "body": {"type": "object"}}}}},
+                     "properties": {"actor": {"type": "string", "enum": ["requester", "external_operator", "fixture"]}, "provider": {"type": "string"}, "method": {"type": "string"}, "path": {"type": "string"}, "body": {"type": "object"}}}}},
                 {
                   "type": "object",
                   "additionalProperties": false,

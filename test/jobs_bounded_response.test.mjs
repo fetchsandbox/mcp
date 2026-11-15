@@ -72,6 +72,21 @@ test('pending progress forwards only measured bounded fields',()=>{
   assert.equal(out.elapsed_s,20);assert.equal(out.job_kind,undefined);assert.equal(out.private,undefined);
 });
 
+test('pending action cursor keeps attempt identity without leaking saved responses or claiming resume',()=>{
+  const execution_progress={run_id:'vr_original',session_id:'vs_original',completed_actions:2,
+    uncertain_action:{scenario_id:'baseline',repeat:0,action_index:2},automatic_resume_available:false,
+    responses:[{private:'do not forward'}]};
+  const out=pendingJob('job_original',{status:'running',execution_progress});
+  assert.equal(out.execution_progress.run_id,'vr_original');
+  assert.equal(out.execution_progress.uncertain_action.action_index,2);
+  assert.equal(out.execution_progress.responses,undefined);
+  assert.equal(out.execution_progress.automatic_resume_available,false);
+  for(const override of [{completed_actions:-1},{automatic_resume_available:true},{session_id:'https://private'},
+      {uncertain_action:{scenario_id:'baseline',repeat:0,action_index:Infinity}}]) {
+    assert.equal(pendingJob('job_original',{status:'running',execution_progress:{...execution_progress,...override}}).execution_progress,undefined);
+  }
+});
+
 test('stalled response bodies and retry waits cannot exceed a bounded poll',async()=>{
   let mode='body',reads=0;
   const srv=createServer((req,res)=>{reads++;
