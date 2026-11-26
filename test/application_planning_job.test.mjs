@@ -33,3 +33,16 @@ test('fixture inspection forwards through the existing endpoint without planning
     assert.equal(result.app_verified,false);assert.equal(result.records[0].id,'txn_actual');
   }finally{globalThis.fetch=previous;}
 });
+
+test('invalid inspection returns an actionable repair without sending an HTTP request',async()=>{
+ const previous=globalThis.fetch;let calls=0;
+ globalThis.fetch=async()=>{calls++;throw new Error('invalid inspection reached HTTP');};
+ try {
+  const result=await runValidateIntegration({session_id:'vs_owned',inspect:{provider:'paddle',resource:'operations',path:'/transactions',limit:20}});
+  assert.equal(calls,0);assert.equal(result.status,'inspection_rejected');assert.equal(result.app_verified,false);
+  assert.equal(result.next_action,'repair_inspection');
+  assert.ok(result.validation_errors.some(x=>x.code==='operations_state_pagination'));
+  assert.ok(result.validation_errors.some(x=>x.code==='operation_method_path_pair'));
+  assert.equal(result.session_id,'vs_owned');
+ }finally{globalThis.fetch=previous;}
+});

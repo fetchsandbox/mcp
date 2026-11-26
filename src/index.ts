@@ -59,6 +59,7 @@ import { getJobTool, runGetJob, withJobResponseBudget } from "./tools/jobs.js";
 import { VERSION } from "./version.js";
 import { installTestCredentialsTool, runInstallTestCredentials } from "./tools/install_test_credentials.js";
 import { manageTunnelTool, runManageTunnel } from "./tools/manage_tunnel.js";
+import { rehearsalTools, runRehearsalAction } from "./tools/rehearsal.js";
 
 /**
  * ONE registry, TWO transports.
@@ -114,6 +115,10 @@ const ANNOTATIONS: Record<string, {
   idempotentHint: boolean;
   openWorldHint: boolean;
 }> = {
+  plan_rehearsal: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  run_rehearsal: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  get_rehearsal: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  stop_rehearsal: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   // Read, route, analyse — no state the user owns changes.
   coach:          { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
   guide:          { readOnlyHint: true,  destructiveHint: false, idempotentHint: true,  openWorldHint: true },
@@ -164,6 +169,7 @@ function annotated<T extends { name: string }>(tool: T): T {
  *  instead of an accidental one.
  */
 export const ALL_TOOLS = [
+  ...rehearsalTools.map(annotated), // goal-first application entry points; same engine
   annotated(coachTool), // listed FIRST — the conversational entry point
   annotated(findBugsTool), // investigate: find production bugs in the user's own code
   annotated(fixBugTool), // fix: grounded remediation → git diff proposal
@@ -227,6 +233,8 @@ export const ALL_TOOLS = [
  *  human in the loop.
  */
 export const HOSTED_TOOL_NAMES = new Set([
+  // Keep the existing hosted selection surface until the guided native pilot
+  // is qualified. Do not weaken the <=8-tools ratchet by adding aliases here.
   "coach",                 // the conversational entry point
   "guide",                 // route a symptom to provider behaviour
   "validate_integration",  // prove the USER'S app, not our twin
@@ -253,6 +261,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       let result: unknown;
       const a = (args ?? {}) as Record<string, unknown>;
       switch (name) {
+        case "plan_rehearsal":
+        case "run_rehearsal":
+        case "get_rehearsal":
+        case "stop_rehearsal":
+          result = await runRehearsalAction(name, a);
+          break;
         case getJobTool.name:
           result = await runGetJob(typeof a.job_id === "string" ? a.job_id : "");
           break;
@@ -344,7 +358,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
           result = await runInstallTestCredentials({session_id: String(a.session_id), run_id: String(a.run_id), env_mapping: a.env_mapping as Record<string, string> | undefined});
           break;
         case manageTunnelTool.name:
-          result = await runManageTunnel({action: String(a.action), port: typeof a.port === "number" ? a.port : undefined, ttl_seconds: typeof a.ttl_seconds === "number" ? a.ttl_seconds : undefined});
+          result = await runManageTunnel({action: String(a.action), port: typeof a.port === "number" ? a.port : undefined, ttl_seconds: typeof a.ttl_seconds === "number" ? a.ttl_seconds : undefined, callback_config_file: typeof a.callback_config_file === "string" ? a.callback_config_file : undefined});
           break;
         case validateIntegrationTool.name:
           result = await runValidateIntegration({
@@ -466,6 +480,12 @@ function friendlyError(toolName: string, msg: string, err: unknown): string {
   // through rather than wrapping them in "Error:" and a hint.
   if (status === 401) return msg;
   const m = msg.toLowerCase();
+  if (rehearsalTools.some(tool => tool.name === toolName) &&
+      ((status !== undefined && status >= 500) || m.includes("network error") || m.includes("timed out"))) {
+    return toolName === "get_rehearsal"
+      ? "Error: rehearsal progress could not be retrieved. Read the same returned attempt or job again after the connection recovers. Do not start another execution. No new verdict was observed."
+      : "Error: the rehearsal submission could not be confirmed. It was not automatically resubmitted; it may already have been accepted. Do not repeat this action. If an attempt/job ID was returned previously, retrieve that exact identity with get_rehearsal. If no identity was received, stop and report the uncertain submission rather than creating a replacement. No test outcome was established by this error.";
+  }
   if (
     m.includes("not a valid openapi spec") ||
     m.includes("missing 'openapi'")

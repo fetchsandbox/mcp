@@ -13,7 +13,7 @@ import { join } from "node:path";
 
 const BASE = process.env.FETCHSANDBOX_BASE_URL || "https://stage.fetchsandbox.com";
 const ROOT = new URL("..", import.meta.url).pathname;
-const BIN = join(ROOT, "dist/index.js");
+const BIN = process.env.FS_MCP_SERVER_PATH || join(ROOT, "dist/index.js");
 
 const proc = spawn("node", [BIN], {
   env: { ...process.env, FETCHSANDBOX_BASE_URL: BASE },
@@ -79,6 +79,12 @@ async function main() {
   const tools = list.result?.tools ?? [];
   console.log(`✓ tools/list — ${tools.length} tools`);
   for (const t of tools) console.log(`    • ${t.name} — ${t.description.slice(0, 80)}...`);
+
+  if (process.argv.includes("--discovery-only")) {
+    if (!tools.length) throw new Error("empty tool registry");
+    proc.kill();
+    return;
+  }
 
   // 3. tools/call import_spec with the petstore URL
   const callId = send("tools/call", {

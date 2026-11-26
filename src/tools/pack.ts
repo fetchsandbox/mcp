@@ -41,6 +41,7 @@ const EXCLUDES = [
   ".mcp.json",
   ".mcp.*.json",
   "mcp.json",
+  ".fetchsandbox-source.json", // local parent/CI evidence, not application code
 
   // AGENT INSTRUCTION FILES ARE NEVER SHIPPED.
   //

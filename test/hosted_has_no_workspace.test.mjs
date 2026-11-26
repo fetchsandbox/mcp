@@ -191,3 +191,41 @@ test("stdio coach and guide still scan the actual client workspace", async (t) =
   }
   assert.deepEqual(calls[0].context.dependencies, ["stripe"]);
 });
+
+test("installed plugin discovery uses the supplied workspace, never the package cwd", async (t) => {
+  const workspace = plantedWorkspace();
+  const packageDir = mkdtempSync(join(tmpdir(), "plugin-cwd-"));
+  writeFileSync(join(packageDir,"package.json"),JSON.stringify({dependencies:{resend:"1"}}));
+  const cwd=process.cwd(), oldRoot=process.env.FETCHSANDBOX_WORKSPACE_ROOT, oldHosted=process.env.FS_MCP_HOSTED;
+  const fetch=globalThis.fetch;
+  t.after(()=>{
+    process.chdir(cwd);globalThis.fetch=fetch;
+    for(const [name,value] of [["FETCHSANDBOX_WORKSPACE_ROOT",oldRoot],["FS_MCP_HOSTED",oldHosted]]){
+      if(value===undefined)delete process.env[name];else process.env[name]=value;
+    }
+    rmSync(workspace,{recursive:true,force:true});rmSync(packageDir,{recursive:true,force:true});
+  });
+  process.chdir(packageDir);process.env.FETCHSANDBOX_WORKSPACE_ROOT=workspace;delete process.env.FS_MCP_HOSTED;
+  const calls=[];
+  globalThis.fetch=async(_url,init)=>{
+    calls.push(JSON.parse(init.body));return new Response("{}",{status:200,headers:{"content-type":"application/json"}});
+  };
+  const {runCoach}=await import("../dist/tools/coach.js");
+  const {runGuide}=await import("../dist/tools/guide.js");
+  for(const run of [runCoach,runGuide]){
+    await run({intent:"Test my integration"});
+    const context=calls.at(-1).context;
+    assert.deepEqual(context.detected_specs,["stripe"]);
+    assert.equal(context.code_probe.stripe.idempotency.present,true);
+    assert.equal(context.code_probe.stripe.idempotency.at,"stripe-handler.js:2");
+  }
+  assert.deepEqual(calls[0].context.dependencies,["stripe"]);
+  process.env.FETCHSANDBOX_WORKSPACE_ROOT=join(workspace,"missing");
+  await runGuide({intent:"Test my integration"});
+  assert.equal(calls.at(-1).context,undefined,"unavailable caller workspace must not fall back to package signals");
+  process.env.FS_MCP_HOSTED="1";process.env.FETCHSANDBOX_WORKSPACE_ROOT=workspace;
+  for(const run of [runCoach,runGuide]){
+    await run({intent:"Test my integration"});
+    assert.equal(calls.at(-1).context,undefined,"hosted discovery must not scan either local tree");
+  }
+});
