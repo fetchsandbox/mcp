@@ -18,7 +18,7 @@
  *
  *   npm run mcpb          # build dist, stage, write manifest, pack
  */
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { readFileSync, writeFileSync, rmSync, mkdirSync, mkdtempSync, cpSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -158,7 +158,19 @@ sh(`npx --yes @anthropic-ai/mcpb@latest pack ${OUT} ${join(ROOT, "fetchsandbox-m
 if (!existsSync(join(ROOT, "fetchsandbox-mcp.mcpb"))) throw new Error("pack produced no bundle");
 injectInputSchemas(join(ROOT, "fetchsandbox-mcp.mcpb"), tools);
 console.log(`\n✓ fetchsandbox-mcp.mcpb — v${pkg.version}, ${names.length} tools`);
-console.log("  publish:  smithery mcp publish ./fetchsandbox-mcp.mcpb -n <org>/<name>\n");
+console.log("  Local artifact only. Follow mcp/AGENTS.md before distribution.\n");
+if (process.argv.includes("--codex-plugin")) {
+  const { buildCodexPlugin, resolveCanonicalSkill } = await import("./codex-plugin.mjs");
+  const output = buildCodexPlugin({
+    stage: OUT,
+    output: join(ROOT, ".plugin-build"),
+    skillSource: resolveCanonicalSkill(ROOT),
+  });
+  const archive = join(ROOT, "fetchsandbox-plugin.zip");
+  rmSync(archive, { force: true });
+  execFileSync("zip", ["-q", "-r", archive, "."], { cwd: output, stdio: "inherit" });
+  console.log(`✓ fetchsandbox-plugin.zip — local desktop package v${pkg.version}`);
+}
 
 /**
  * Put `inputSchema` back into the packed manifest.

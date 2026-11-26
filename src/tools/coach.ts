@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { postJson } from "../client.js";
-import { scanRepoSignals } from "./repo_signals.js";
+import { scanRepoSignals, repoSignalRoot } from "./repo_signals.js";
 import { isHosted } from "../request_context.js";
 
 /**
@@ -10,7 +10,7 @@ import { isHosted } from "../request_context.js";
  * manifest directly. We send raw package names; the backend maps them to specs
  * (single source of truth for the SDK→spec table). Best-effort, never throws.
  */
-export function detectRepoDependencies(cwd: string = process.cwd()): string[] {
+export function detectRepoDependencies(cwd: string = repoSignalRoot()): string[] {
   const deps = new Set<string>();
   const tryFile = (rel: string, parse: (t: string) => void) => {
     try {

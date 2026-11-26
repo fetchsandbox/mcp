@@ -1,4 +1,4 @@
-import { getJson, postJson, ToolError } from "../client.js";
+import { getJson, postJson, postJsonLong, ToolError } from "../client.js";
 import { startAndPoll } from "./jobs.js";
 
 /**
@@ -24,6 +24,10 @@ import { startAndPoll } from "./jobs.js";
  * was right about that.
  */
 export interface ValidateIntegrationInput {
+  /** Internal guided adapters: require ownership before creating a session. */
+  environment_scope?: "owner";
+  /** Internal guided adapters: uncertain writes must never be resubmitted. */
+  single_submission?: boolean;
   reassess?: boolean;
   /** Where THEIR app is reachable. The one fact we cannot derive. */
   app_base_url?: string;
@@ -74,6 +78,9 @@ const coordinationGuidance = {
 /** Authoring diagnostics only. Never repairs a contract or relaxes server checks. */
 function applicationContractDiagnostics(config: Record<string, unknown>) {
   const errors: {path: string; code: string; message: string}[] = [];
+  if (config.event_destinations && typeof config.event_destinations === "object" && Object.keys(config.event_destinations).length && config.require_verifier_token !== true) {
+    errors.push({path:"application_config.require_verifier_token",code:"signed_events_require_protected_setup",message:"Signed-event contracts require require_verifier_token=true and an actual protected test adapter. Configure its returned verifier token and provider signing secrets through the protected handoff before preflight. Keep signature verification enabled; do not change the contract to unsigned HTTP events or remove its authorization requirement."});
+  }
   if (!Array.isArray(config.checks)) return errors;
   const object = (value: unknown): value is Record<string, unknown> =>
     !!value && typeof value === "object" && !Array.isArray(value);
@@ -359,10 +366,16 @@ export const validateIntegrationTool = {
       preflight: {type: "boolean", description: "Read-only public readiness check for a configured application_workflow_v1. Requires session_id/run_id. Checks frozen empty baseline and token enforcement without creating orders, injecting faults or rotating secrets. Retry same run after its exact setup blocker is repaired."},
       execute: {type: "boolean", description: "Drive the configured app and evaluate the frozen receipt suite. Requires session_id/run_id; configuration acknowledgment alone is not proof. Starts the existing backend job asynchronously and returns promptly; follow status in this agent without allocating a background helper."},
       inspect: {type: "object", required: ["provider", "resource"], additionalProperties: false,
-        description: "Read fixture inputs through MCP using session_id. Prefer this MCP read to extracting a key for direct HTTP: the edge can reject a generic Python user agent even with valid ownership. This path keeps the existing MCP client authentication and headers. Do not ask for live provider keys. First resource=state returns collection counts; select collection to read real IDs and relationships with pagination. resource=operations lists provider contracts; specify both exact method and documented path to resolve one schema. Read-only, session-owned twins only, not application proof.",
+        description: "Read session-owned twin inputs, not application proof. To list operations: {provider:'paddle',resource:'operations'}. To resolve one operation, add BOTH method and exact documented path. Never include collection, offset or limit for operations. To list saved collections: {provider:'paddle',resource:'state'}. For saved records, add collection and optional offset/limit; never method/path. Use this authenticated MCP read rather than extracting keys for direct HTTP. Do not ask for live provider keys.",
         properties: {provider: {type: "string"}, resource: {type: "string", enum: ["state", "operations"]},
           collection: {type: "string"}, offset: {type: "integer", minimum: 0}, limit: {type: "integer", minimum: 1, maximum: 100},
-          method: {type: "string"}, path: {type: "string"}}},
+          method: {type: "string", minLength: 1}, path: {type: "string", minLength: 1}},
+        oneOf: [
+          {properties: {resource: {const: "state"}}, not: {anyOf: [{required: ["method"]}, {required: ["path"]}]}},
+          {properties: {resource: {const: "operations"}},
+            not: {anyOf: [{required: ["collection"]}, {required: ["offset"]}, {required: ["limit"]}]},
+            oneOf: [{required: ["method", "path"]}, {not: {anyOf: [{required: ["method"]}, {required: ["path"]}]}}]},
+        ]},
       fixtures: {
         type: "object", required: ["id", "steps"], additionalProperties: false,
         description: "Prepare session-owned twin data before app tests. Requires session_id. Stable id makes repeated calls replay-safe. Every step names spec, method and relative path. Use {{step1.id}} for dependencies. End with GET and an exact identity assertion. No live provider calls. An explicitly advertised /__fetchsandbox/fixtures/time step is an owner-only synthetic clock control, not a provider API; it is unavailable during active attempts and requires normal provider GET readback.",
@@ -566,7 +579,7 @@ export const validateIntegrationTool = {
               "oneOf": [
                 {"type": "object", "additionalProperties": false,
                  "required": ["provider_input"],
-                 "description": "Qualified external input, recorded separately from app execution. Requester is the default (Zendesk public reply). Explicit external_operator permits only configured twin operations, such as an independent refund or new subscription between app actions. It cannot replace app execution or count as an app effect.",
+                 "description": "Qualified external input, recorded separately from app execution. Requester is the default (Zendesk public reply). Explicit external_operator permits only configured twin operations. Owned fixture inputs use only advertised internal controls, never provider HTTP endpoints. POST /__fetchsandbox/fixtures/transition takes resource, id, status and optional delivery_delay_seconds (0 to 5); only advertised qualified resources are admitted, with a configured direct signed-event destination. It changes isolated provider state and delivers that generated signed event; bind its returned event_id in a later event.replay_of to replay exact bytes without regressing provider state. This is synthetic lifecycle evidence, not native delivery, and cannot replace app execution or count as an app effect.",
                  "properties": {"expect_status": {"type": "integer", "enum": [200]},
                    "provider_input": {"type": "object", "additionalProperties": false,
                      "required": ["provider", "method", "path", "body"],
@@ -838,6 +851,27 @@ export async function runValidateIntegration(
 ): Promise<unknown> {
   const hasSession = Boolean(input.session_id && input.session_id.trim());
   const hasProviders = Array.isArray(input.providers) && input.providers.length > 0;
+  if (input.inspect) {
+    // Direct callers also use this function without the MCP schema validator.
+    // Reject incompatible fields instead of silently discarding user intent.
+    const query = input.inspect;
+    const errors: {code: string; message: string}[] = [];
+    if (!hasSession) errors.push({code: "inspection_session_required", message: "Use the session_id returned by setup; this read does not create a session."});
+    if (typeof query.provider !== "string" || !query.provider.trim()) errors.push({code: "inspection_provider_required", message: "Choose the provider from this session's returned inspection_tools. Each populated call includes its provider; do not guess a provider or create another session."});
+    if (query.resource === "operations") {
+      if (["collection", "offset", "limit"].some(key => key in query)) errors.push({code: "operations_state_pagination", message: "For operations, remove collection, offset and limit. These fields paginate saved state only."});
+      const method = typeof query.method === "string" && query.method.trim().length > 0;
+      const path = typeof query.path === "string" && query.path.trim().length > 0;
+      if (method !== path || ("method" in query && !method) || ("path" in query && !path)) errors.push({code: "operation_method_path_pair", message: "Supply both method and exact documented path, or omit both to list operations. Do not guess the method."});
+    } else if (query.resource === "state") {
+      if ("method" in query || "path" in query) errors.push({code: "state_operation_filters", message: "For saved state, remove method/path; choose collection and optional offset/limit."});
+    } else errors.push({code: "inspection_resource", message: "Choose resource=state for saved records or resource=operations for API contracts."});
+    if (errors.length) return {
+      session_id: input.session_id, status: "inspection_rejected", step: "inspect",
+      app_verified: false, next_action: "repair_inspection", validation_errors: errors,
+      message_for_user: "No HTTP request was sent. Correct these inspection fields and keep the same session.",
+    };
+  }
   if (input.suite && !["receipt_delivery_v1", "receipt_recovery_v1", "application_workflow_v1"].includes(input.suite)) {
     throw new ToolError("Unknown application verification suite.");
   }
@@ -884,6 +918,7 @@ export async function runValidateIntegration(
     };
   }
   const body = {
+    ...(input.environment_scope ? {environment_scope: input.environment_scope} : {}),
     providers: input.providers ?? [],
     app_base_url: input.app_base_url ?? "",
     session_id: input.session_id ?? null,
@@ -910,7 +945,9 @@ export async function runValidateIntegration(
       {...body, async_job: true}, {maxMs: 20_000});
     return {...plan, coordination_guidance: coordinationGuidance};
   }
-  const result = await postJson<Record<string, unknown>>("/api/mcp/validate_integration", body);
+  const result = input.single_submission
+    ? await postJsonLong<Record<string, unknown>>("/api/mcp/validate_integration", body, 30_000)
+    : await postJson<Record<string, unknown>>("/api/mcp/validate_integration", body);
   // A short backend job poll does not make the enclosing MCP HTTP request
   // short. Recovery suites outlive its 90-second deadline. Return readiness
   // promptly and let the caller retrieve this same session, never re-execute.

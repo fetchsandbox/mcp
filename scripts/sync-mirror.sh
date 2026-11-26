@@ -11,6 +11,13 @@
 # registry at all (the interactive login cannot do an org namespace).
 set -euo pipefail
 
+CANDIDATE_BRANCH=""
+if [ "$#" -gt 0 ]; then
+  [ "$#" -eq 2 ] && [ "$1" = "--candidate-branch" ] || { echo "usage: sync-mirror.sh [--candidate-branch codex/name]" >&2; exit 1; }
+  CANDIDATE_BRANCH="$2"
+  [[ "$CANDIDATE_BRANCH" == codex/* ]] || { echo "Candidate branch must use codex/" >&2; exit 1; }
+  git check-ref-format --branch "$CANDIDATE_BRANCH" >/dev/null
+fi
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="$(node -p "require('$SRC/package.json').version")"
 WORK="$(mktemp -d)"
@@ -54,12 +61,26 @@ PATHS=(src test scripts examples package.json package-lock.json server.json
 
 echo "syncing fetchsandbox-mcp $VERSION to the public mirror"
 git clone -q --depth 1 "https://github.com/fetchsandbox/mcp.git" "$WORK/mirror"
+if [ -n "$CANDIDATE_BRANCH" ]; then git -C "$WORK/mirror" checkout -q -b "$CANDIDATE_BRANCH"; fi
 
 for p in "${PATHS[@]}"; do
   [ -e "$SRC/$p" ] || { echo "  missing locally, skipped: $p"; continue; }
   rm -rf "${WORK:?}/mirror/$p"
   cp -R "$SRC/$p" "$WORK/mirror/$p"
 done
+
+# The maintained skill lives outside mcp/ in the application repository.
+# Export that same file so a public mirror can build the plugin independently.
+node --input-type=module - "$SRC" "$WORK/mirror" <<'JS'
+import fs from 'node:fs';
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
+const [source, mirror] = process.argv.slice(2);
+const {resolveCanonicalSkill} = await import(pathToFileURL(path.join(source, 'scripts/codex-plugin.mjs')));
+const target=path.join(mirror,'skills/fs-validate/SKILL.md');
+fs.mkdirSync(path.dirname(target),{recursive:true});
+fs.copyFileSync(resolveCanonicalSkill(source),target);
+JS
 
 cd "$WORK/mirror"
 if git diff --quiet && git diff --cached --quiet; then
@@ -70,5 +91,10 @@ git add -A
 git -c user.name="Raj Nagulapalle" -c user.email="raj@fetchsandbox.com" \
     commit -q -m "release $VERSION"
 git push -q origin HEAD
-echo "  pushed. tag it to publish to the official registry:"
-echo "    gh release create v$VERSION --repo fetchsandbox/mcp --generate-notes"
+if [ -n "$CANDIDATE_BRANCH" ]; then
+  echo "  staged candidate $CANDIDATE_BRANCH; main and npm remain unchanged"
+  git rev-parse HEAD
+else
+  echo "  pushed. tag it to publish to the official registry:"
+  echo "    gh release create v$VERSION --repo fetchsandbox/mcp --generate-notes"
+fi

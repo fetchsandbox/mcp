@@ -58,7 +58,9 @@ export const fixBugTool = {
         description:
           "OPTIONAL. The known remediation pattern for this failure class, if " +
           "you have it (e.g. from guide's matched_bug_pattern). Improves fix " +
-          "quality; the proof still certifies.",
+          "quality; the proof still certifies. Describe the required behavior, " +
+          "not instructions to avoid edits: this tool edits only a disposable " +
+          "copy to generate a proposed diff, never your working tree.",
       },
       path: {
         type: "string",
@@ -86,6 +88,9 @@ export async function runFixBug(input: FixBugInput): Promise<{
   job_id?: string;
   next_tool_call?: unknown;
   agent_guidance?: string;
+  error?: string | null;
+  failure_kind?: string;
+  next_action?: string;
   /** Typed next step from the server. Every entry point carries the exit:
    *  a finding is a hypothesis until prove_fix measures it. */
   next_actions?: unknown;
@@ -118,6 +123,14 @@ export async function runFixBug(input: FixBugInput): Promise<{
   if (raw.status === "error") {
     throw new ToolError(`FetchSandbox remediation failed: ${raw.error ?? "unknown error"}`);
   }
+  const noChanges = raw.failure_kind === "no_changes" || raw.error === "subprocess produced no changes"
+    || (raw.available === true && (typeof raw.diff !== "string" || !raw.diff.trim()));
+  if (noChanges) return {
+    status: "unavailable", available: false, diff: null, summary: null,
+    engine: "fetchsandbox", packed_bytes: bytes, failure_kind: "no_changes",
+    error: "No proposed patch was produced.", next_action: "review_finding_and_propose_patch",
+    agent_guidance: "No fix or proof was produced. Do not repeat fix_bug with the same inputs. Review the finding and its required behavior; if authorized, propose a patch using your normal editing tools, retain the original source, and prove both versions against the same contract before claiming success.",
+  };
   if (raw.available !== true) {
     throw new ToolError(
       `FetchSandbox remediation is unavailable right now: ${(raw.error as string) ?? "unknown error"}`,

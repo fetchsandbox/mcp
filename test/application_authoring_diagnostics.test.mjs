@@ -113,3 +113,15 @@ test('qualified requester input and provider observations reach the backend unch
     assert.deepEqual(calls[0].application_config,request.application_config);
   } finally {globalThis.fetch=previous;}
 });
+
+test('signed event setup cannot omit verifier protection or silently acquire it',async()=>{
+ const previous=globalThis.fetch;let calls=0;
+ globalThis.fetch=async()=>{calls++;throw new Error('Unprotected contract must stay local');};
+ try {
+  const request=input([baseline,purchase]);delete request.application_config.require_verifier_token;
+  const frozen=JSON.stringify(request);const result=await runValidateIntegration(request);
+  assert.equal(calls,0);assert.equal(result.configuration_accepted,false);
+  assert.equal(result.app_verified,false);assert.equal(JSON.stringify(request),frozen);
+  assert.ok(result.validation_errors.some(e=>e.code==='signed_events_require_protected_setup'));
+ }finally{globalThis.fetch=previous;}
+});

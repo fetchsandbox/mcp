@@ -3,7 +3,32 @@ import assert from 'node:assert/strict';
 import {promises as fs} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {saveCredentialFile,runInstallTestCredentials} from '../dist/tools/install_test_credentials.js';
+import {createHash} from 'node:crypto';
+import {saveCredentialFile,runInstallTestCredentials,nodeRunHeaderProfile} from '../dist/tools/install_test_credentials.js';
+test('the local Node profile resolves to the packaged adapter rather than the caller project',async()=>{
+ const profile=nodeRunHeaderProfile();
+ assert.equal(profile.profile,'node_native_fetch_header_only');
+ assert((await fs.stat(profile.preload_file)).isFile());
+ assert(profile.preload_file.endsWith('/dist/runtime/run-header-only.js'));
+ assert.deepEqual(profile.environment,['FETCHSANDBOX_FLOW_RUN_ID','FETCHSANDBOX_TEST_PROVIDER_BASES']);
+});
+test('original reference comes only from the explicit workspace and excludes symlinks',async()=>{
+ const root=await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()),'source-reference-'));
+ const previous=process.env.FETCHSANDBOX_WORKSPACE_ROOT;
+ try{
+  process.env.FETCHSANDBOX_WORKSPACE_ROOT=root;
+  assert.equal(nodeRunHeaderProfile().original_reference,undefined);
+  const file=path.join(root,'.fetchsandbox-source.json');
+  const raw=JSON.stringify({schema:'fetchsandbox-source-v1',status:'captured',files:{'app.mjs':'a'.repeat(64)}});
+  await fs.writeFile(file,raw);
+  assert.deepEqual(nodeRunHeaderProfile().original_reference,{manifest_file:file,sha256:createHash('sha256').update(raw).digest('hex')});
+  await fs.rename(file,path.join(root,'actual.json'));await fs.symlink(path.join(root,'actual.json'),file);
+  assert.equal(nodeRunHeaderProfile().original_reference,undefined);
+ }finally{
+  if(previous===undefined)delete process.env.FETCHSANDBOX_WORKSPACE_ROOT;else process.env.FETCHSANDBOX_WORKSPACE_ROOT=previous;
+  await fs.rm(root,{recursive:true,force:true});
+ }
+});
 test('private handoff preserves existing files, maps webhook setting, and returns no values',async()=>{
  const root=await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()),'handoff-'));
  try{
@@ -33,4 +58,18 @@ test('hosted callers cannot retrieve or write local secrets',async()=>{
  process.env.FS_MCP_HOSTED='1';
  try{await assert.rejects(runInstallTestCredentials({session_id:'vs_'+'a'.repeat(12),run_id:'vr_'+'b'.repeat(32)}),/Hosted builders/);}
  finally{delete process.env.FS_MCP_HOSTED;}
+});
+
+test('ineligible or inactive handoff gives bounded same-session recovery without writing secrets',async()=>{
+ const previous=globalThis.fetch;const calls=[];
+ globalThis.fetch=async(url)=>{calls.push(url);return new Response(JSON.stringify({detail:'private-server-detail'}),{status:404,headers:{'content-type':'application/json'}});};
+ try {
+  const input={session_id:'vs_'+'a'.repeat(12),run_id:'vr_'+'b'.repeat(32)};
+  const result=await runInstallTestCredentials(input);
+  assert.equal(calls.length,1);assert.equal(result.status,'setup_unavailable');
+  assert.equal(result.credentials_installed,false);assert.equal(result.secret_values_returned,false);
+  assert.equal(result.app_verified,false);assert.equal(result.credential_file,undefined);
+  assert.deepEqual(result.next_tool_call.arguments,{session_id:input.session_id});
+  assert(!JSON.stringify(result).includes('private-server-detail'));
+ }finally{globalThis.fetch=previous;}
 });
