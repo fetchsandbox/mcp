@@ -126,3 +126,32 @@ test('received fixtures are explicit inputs and fit a separate bounded control a
   check.actions=[baseline.actions[0],{...fixture,method:'POST'}];
   assert.equal(validate(input([check])).valid,false,'a fixture cannot masquerade as an application request');
 });
+
+test('controlled fixture transitions use the existing input action and exact replay schema',()=>{
+  const request=input([baseline,{...baseline,id:'status-order',actions:[
+    baseline.actions[0],
+    {provider_input:{provider:'whatsapp-cloud',actor:'fixture',method:'POST',path:'/__fetchsandbox/fixtures/transition',body:{resource:'messages',id:'{{step1.wamid}}',status:'read',delivery_delay_seconds:1}}},
+    {event:{provider:'whatsapp-cloud',replay_of:'{{step2.event_id}}'},concurrency:2},
+  ]}]);
+  request.application_config.event_destinations={'whatsapp-cloud':'/whatsapp-event'};
+  assert.equal(validate(request).valid,true);
+  const actionSchema=validateIntegrationTool.inputSchema.properties.application_config.properties.checks.items.oneOf.find(branch=>branch.properties?.actions).properties.actions;
+  assert.match(JSON.stringify(actionSchema),/fixtures\/transition/);
+  assert.match(JSON.stringify(actionSchema),/synthetic lifecycle evidence/);
+});
+
+test('inspection schema separates operation lookup from paginated state',()=>{
+  for (const inspect of [
+    {provider:'paddle',resource:'operations'},
+    {provider:'paddle',resource:'operations',method:'GET',path:'/transactions'},
+    {provider:'stripe',resource:'state',collection:'customers',offset:0,limit:1},
+  ]) assert.equal(validate({session_id:'vs_owned',inspect}).valid,true);
+  for (const inspect of [
+    {provider:'paddle',resource:'operations',path:'/transactions',limit:20},
+    {provider:'paddle',resource:'operations',limit:20},
+    {provider:'paddle',resource:'operations',collection:'transactions'},
+    {provider:'paddle',resource:'operations',path:'/transactions'},
+    {provider:'paddle',resource:'operations',method:'GET'},
+    {provider:'paddle',resource:'state',method:'GET',path:'/transactions'},
+  ]) assert.equal(validate({session_id:'vs_owned',inspect}).valid,false,JSON.stringify(inspect));
+});

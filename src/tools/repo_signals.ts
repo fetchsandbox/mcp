@@ -14,7 +14,7 @@
  * Source stays on the machine: only this compact JSON travels.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 
 const DEP_TO_SPEC: Record<string, string> = {
   stripe: "stripe",
@@ -111,8 +111,13 @@ function walk(root: string): string[] {
   return out;
 }
 
+/** Installed plugins start in their package; the caller supplies its workspace. */
+export function repoSignalRoot(): string {
+  return resolve(process.env.FETCHSANDBOX_WORKSPACE_ROOT?.trim() || process.cwd());
+}
+
 /** Scan the repo for provider presence + per-provider guard presence. */
-export function scanRepoSignals(cwd: string = process.cwd()): RepoSignals {
+export function scanRepoSignals(cwd: string = repoSignalRoot()): RepoSignals {
   const present = new Set<string>();
   const filesBySpec: Record<string, Set<string>> = {};
 

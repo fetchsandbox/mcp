@@ -105,7 +105,8 @@ export async function runGuide(input: GuideInput): Promise<GuideResponse> {
   // confidence 0.95. A confident route to the wrong provider is worse than no
   // route — everything downstream inherits it.
   //
-  // Only stdio's cwd is the user's project. Hosted requests must forward the
+  // Stdio uses the explicit caller workspace when installed as a plugin.
+  // Hosted requests must forward the
   // caller's declarations without supplementing them from our server checkout.
   // Best-effort: a repo it cannot read sends nothing.
   const body: Record<string, unknown> = { ...input };
@@ -115,7 +116,7 @@ export async function runGuide(input: GuideInput): Promise<GuideResponse> {
     if (sig?.detected_specs?.length) ctx.detected_specs = sig.detected_specs;
     // code_probe is the tie-breaker the scanner computes when several providers
     // survive: whose handler the repo actually implements, not merely imports.
-    if (sig?.code_probe) ctx.code_probe = sig.code_probe;
+    if (sig?.code_probe && Object.keys(sig.code_probe).length) ctx.code_probe = sig.code_probe;
     if (Object.keys(ctx).length) {
       // A caller-supplied context wins — an explicit hint is not a guess.
       body.context = { ...ctx, ...(input.context as object ?? {}) };
