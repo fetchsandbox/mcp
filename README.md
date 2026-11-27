@@ -17,6 +17,22 @@ first and stopped after. You get a receipt URL either way.
 
 ## Install
 
+### Cursor plugin
+
+The Cursor plugin starts the pinned FetchSandbox MCP package using Node.js 18+
+and `npx`. For a local test, copy this repository into a folder under
+`~/.cursor/plugins/local/`, reload Cursor, and check that FetchSandbox appears
+in Customize. Open the application you want to rehearse as a Cursor workspace.
+Follow FetchSandbox's sign-in link when an authenticated tool requests access.
+Use disposable test data and put temporary credentials in the protected setup
+page. A completed rehearsal returns a receipt link with the observed checks.
+
+[Privacy policy](https://fetchsandbox.com/privacy) ·
+[Terms of service](https://fetchsandbox.com/terms) ·
+[Support](https://github.com/fetchsandbox/mcp/issues)
+
+### Manual MCP setup
+
 The MCP server runs locally through Node.js. Clients can resolve `npx` differently; Cursor on Mac may need the full path from `command -v npx`.
 
 ```json
